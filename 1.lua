@@ -1,4 +1,3 @@
--- SERVICES
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
@@ -11,10 +10,12 @@ end
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
--- Wait for loading GUI
+-- ==================== LOADING GUI ====================
+
 local loadingGui = PlayerGui:FindFirstChild("LoadingGui")
 
 if loadingGui then
+
     print("[INFO] Waiting for LoadingGui to disappear...")
 
     while loadingGui and loadingGui.Parent do
@@ -34,16 +35,26 @@ local WS_URL = "ws://192.168.1.14:8080"
 local ws = nil
 local wsConnected = false
 
-local latestCheck = false
-local latestBusy = true
-
 local sentFail = false
 local sentRecovered = false
+
+local serverState = {
+    Check = false,
+    Busy = true,
+    ReceivedFirstState = false
+}
 
 local function setupWebSocket()
 
     local success, result = pcall(function()
-        return WebSocket.connect(WS_URL)
+
+        if WebSocket and WebSocket.connect then
+            return WebSocket.connect(WS_URL)
+        elseif WebSocket and WebSocket.Connect then
+            return WebSocket.Connect(WS_URL)
+        end
+
+        error("No websocket support")
     end)
 
     if success and result then
@@ -55,24 +66,50 @@ local function setupWebSocket()
 
         ws.OnMessage:Connect(function(msg)
 
-            print("[WS] Received:", msg)
+            print("[WS RAW]", msg)
 
             local ok, data = pcall(function()
                 return HttpService:JSONDecode(msg)
             end)
 
-            if ok and data then
+            if not ok then
+                warn("[WS] Invalid JSON")
+                return
+            end
 
-                if data.type == "state" and data.data then
+            print("[WS JSON]", HttpService:JSONEncode(data))
 
-                    latestCheck = data.data.Check
-                    latestBusy = data.data.Busy
+            -- STATE
+            if data.type == "state" and data.state then
 
-                    print(
-                        "[STATE]",
-                        "Check =", latestCheck,
-                        "Busy =", latestBusy
-                    )
+                if data.state.Check ~= nil then
+                    serverState.Check = data.state.Check
+                end
+
+                if data.state.Busy ~= nil then
+                    serverState.Busy = data.state.Busy
+                end
+
+                serverState.ReceivedFirstState = true
+
+                print(
+                    "[STATE]",
+                    "Check =", tostring(serverState.Check),
+                    "Busy =", tostring(serverState.Busy)
+                )
+            end
+
+            -- EVENTS
+            if data.type == "event" then
+
+                print("[EVENT]", data.event)
+
+                if data.event == "check_true" then
+                    serverState.Check = true
+                end
+
+                if data.event == "busy_false" then
+                    serverState.Busy = false
                 end
             end
         end)
@@ -82,17 +119,33 @@ local function setupWebSocket()
             wsConnected = false
             ws = nil
 
-            print("[WS] Disconnected")
+            warn("[WS] Disconnected")
 
             task.wait(5)
 
             setupWebSocket()
         end)
 
-        -- heartbeat
+        -- READY
+        task.delay(0.5, function()
+
+            if ws and wsConnected then
+
+                pcall(function()
+
+                    ws:Send(HttpService:JSONEncode({
+                        type = "client_ready",
+                        client = "roblox"
+                    }))
+
+                end)
+            end
+        end)
+
+        -- HEARTBEAT
         task.spawn(function()
 
-            while wsConnected and ws do
+            while ws and wsConnected do
 
                 task.wait(10)
 
@@ -100,6 +153,7 @@ local function setupWebSocket()
 
                     ws:Send(HttpService:JSONEncode({
                         type = "heartbeat",
+                        user = player.Name,
                         time = os.time()
                     }))
 
@@ -109,7 +163,7 @@ local function setupWebSocket()
 
     else
 
-        warn("[WS] Failed:", result)
+        warn("[WS] Failed:", tostring(result))
 
         task.wait(5)
 
@@ -123,14 +177,16 @@ setupWebSocket()
 
 local function sendWS(payload)
 
-    if ws and wsConnected then
-
-        pcall(function()
-
-            ws:Send(HttpService:JSONEncode(payload))
-
-        end)
+    if not ws or not wsConnected then
+        warn("[WS] Not connected")
+        return
     end
+
+    pcall(function()
+
+        ws:Send(HttpService:JSONEncode(payload))
+
+    end)
 end
 
 local function sendLose(username)
@@ -215,7 +271,14 @@ local function kickAndRejoin()
 
     sendDupeTrue()
 
-    player:Kick("Retrying...")
+    print("[INFO] Waiting for initial state")
+
+    while not serverState.ReceivedFirstState do
+
+        task.wait(0.5)
+
+        print("[WAIT] No state received yet")
+    end
 
     print("[INFO] Waiting for Check=true and Busy=false")
 
@@ -225,16 +288,19 @@ local function kickAndRejoin()
 
         print(
             "[WAITING]",
-            "Check =", latestCheck,
-            "Busy =", latestBusy
+            "Check =", tostring(serverState.Check),
+            "Busy =", tostring(serverState.Busy)
         )
 
-        if latestCheck == true and latestBusy == false then
+        if serverState.Check == true
+        and serverState.Busy == false then
             break
         end
     end
 
     print("[INFO] Conditions met")
+
+    player:Kick("Retrying...")
 
     while true do
 
@@ -245,7 +311,7 @@ local function kickAndRejoin()
         end)
 
         if not success then
-            warn(err)
+            warn("[TP ERROR]", err)
         end
 
         task.wait(5)
@@ -254,14 +320,24 @@ end
 
 -- ==================== MAIN LOOP ====================
 
+print("[INFO] Waiting for websocket")
+
+while not wsConnected do
+    task.wait(0.5)
+end
+
+print("[INFO] Main loop started")
+
 while task.wait(0.2) do
 
-    local leaderstats = player:FindFirstChild("leaderstats")
+    if not wsConnected then
+        continue
+    end
 
+    local leaderstats = player:FindFirstChild("leaderstats")
     local gems = leaderstats and leaderstats:FindFirstChild("Gems")
 
     -- SUCCESS
-
     if gems and gems.Value == 10000000 then
 
         if not sentRecovered then
@@ -269,10 +345,10 @@ while task.wait(0.2) do
             sentRecovered = true
 
             pcall(function()
-
                 sendRecovered(player.Name)
-
             end)
+
+            print("[SUCCESS] 10M reached")
         end
 
         kickAndRejoin()
@@ -281,7 +357,6 @@ while task.wait(0.2) do
     end
 
     -- FAIL
-
     if not sentFail then
 
         local frameFound = false
@@ -292,7 +367,6 @@ while task.wait(0.2) do
             for _, child in ipairs(guiPath:GetChildren()) do
 
                 if child:IsA("Frame") then
-
                     frameFound = true
                     break
                 end
@@ -309,7 +383,7 @@ while task.wait(0.2) do
 
         if gems and gems.Value == 10000000 then
 
-            print("[INFO] Already at 10M")
+            print("[INFO] Already recovered")
 
         elseif not frameFound then
 
@@ -318,9 +392,7 @@ while task.wait(0.2) do
             print("[FAIL] No frames found")
 
             pcall(function()
-
                 sendLose(player.Name)
-
             end)
 
         else
@@ -329,8 +401,7 @@ while task.wait(0.2) do
         end
     end
 
-    -- FIRE REMOTE
-
+    -- REMOTE
     for _, child in ipairs(guiPath:GetChildren()) do
 
         if child:IsA("Frame") then
