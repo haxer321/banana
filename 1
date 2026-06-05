@@ -34,123 +34,49 @@ local sentRecovered = false
 
 -- ==================== WEBSOCKET SETUP ====================
 local function setupWebSocket()
-
     local success, result = pcall(function()
-
         return WebSocket.connect(WS_URL)
-
     end)
 
-
-
     if success and result then
-
         ws = result
-
         wsConnected = true
-
         print("[WS] Connected to server")
 
-
-
         ws.OnMessage:Connect(function(msg)
-
             print("[WS] Received:", msg)
 
-            
-
-            -- Parse server messages
-
             local success, data = pcall(function()
-
                 return HttpService:JSONDecode(msg)
-
             end)
 
-            
-
             if success and data then
-
                 if data.type == "init" then
-
                     print("[WS] Handshake complete")
-
                     ws:Send(HttpService:JSONEncode({ type = "client_ready" }))
-
-                elseif data.type == "heartbeat_ack" then
-
-                    print("[WS] Heartbeat OK")
-
                 elseif data.type == "update_ack" then
-
                     print("[WS] Update accepted. Current Fails:", data.Fails)
-
                 elseif data.type == "state" then
-
                     print("[WS] State - Dupe:", data.data.Dupe, "Check:", data.data.Check, "Sendto:", data.data.Sendto)
-
                 end
-
             end
-
         end)
-
-
 
         ws.OnClose:Connect(function()
-
             wsConnected = false
-
             ws = nil
-
             print("[WS] Disconnected, reconnecting in 5s...")
-
             task.wait(5)
-
             setupWebSocket()
-
         end)
-
-
-
-        -- Start heartbeat
-
-        task.spawn(function()
-
-            while wsConnected and ws do
-
-                task.wait(10)
-
-                if ws and wsConnected then
-
-                    pcall(function()
-
-                        ws:Send(HttpService:JSONEncode({ type = "heartbeat", time = os.time() }))
-
-                    end)
-
-                end
-
-            end
-
-        end)
-
-
 
         return true
-
     else
-
         print("[WS] Failed to connect:", tostring(result))
-
         task.wait(5)
-
         setupWebSocket()
-
         return false
-
     end
-
 end
 
 -- Connect WebSocket
@@ -219,41 +145,26 @@ local function kickAndRejoin()
     player:Kick("Retrying...")
 
     task.spawn(function()
-
         task.wait(0.2)
-
-        
 
         local wsReady = false
 
         ws.OnMessage:Connect(function(msg)
-
             local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
-
             if ok and data.Check == true and data.Busy == false then
-
                 wsReady = true
-
             end
-
         end)
 
         while not wsReady do task.wait(0.5) end
 
         while true do
-
             pcall(function()
-
                 TeleportService:Teleport(game.PlaceId, player)
-
             end)
-
             task.wait(5)
-
         end
-
     end)
-
 end
 
 -- ==================== MAIN LOOP ====================
@@ -273,64 +184,38 @@ while task.wait() do
         break
     end
 
+    -- FAIL CONDITION
+    if not sentFail then
+        local frameFound = false
+        local elapsed = 0
 
--- FAIL CONDITION
-
-if not sentFail then
-
-    local frameFound = false
-
-    local elapsed = 0
-
-    while elapsed < 20 do
-
-        for _, child in ipairs(guiPath:GetChildren()) do
-
-            if child:IsA("Frame") then
-
-                frameFound = true
-
-                break
-
+        while elapsed < 20 do
+            for _, child in ipairs(guiPath:GetChildren()) do
+                if child:IsA("Frame") then
+                    frameFound = true
+                    break
+                end
             end
-
+            if frameFound then break end
+            task.wait(0.5)
+            elapsed += 0.5
         end
 
-        if frameFound then break end
+        local leaderstats = player:FindFirstChild("leaderstats")
+        local gems = leaderstats and leaderstats:FindFirstChild("Gems")
 
-        task.wait(0.5)
-
-        elapsed += 0.5
-
+        if gems and gems.Value == 10000000 then
+            print("[INFO] Already at 10M, not reporting failure")
+        elseif not frameFound then
+            sentFail = true
+            print("[INFO] No frames found after 20s, reporting failure")
+            pcall(function()
+                sendLose(player.Name)
+            end)
+        else
+            print("[INFO] Frames found within 20s, skipping fail report")
+        end
     end
-
-    local leaderstats = player:FindFirstChild("leaderstats")
-
-    local gems = leaderstats and leaderstats:FindFirstChild("Gems")
-
-    if gems and gems.Value == 10000000 then
-
-        print("[INFO] Already at 10M, not reporting failure")
-
-    elseif not frameFound then
-
-        sentFail = true
-
-        print("[INFO] No frames found after 20s, reporting failure")
-
-        pcall(function()
-
-            sendLose(player.Name)
-
-        end)
-
-    else
-
-        print("[INFO] Frames found within 20s, skipping fail report")
-
-    end
-
-end
 
     -- REMOTE FIRING LOGIC
     for _, child in ipairs(guiPath:GetChildren()) do
