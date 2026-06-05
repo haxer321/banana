@@ -215,14 +215,14 @@ local staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
 
 -- ==================== KICK FUNCTION ====================
 local function kickAndRejoin()
-
+    sendDupeTrue()
     player:Kick("Retrying...")
 
     task.spawn(function()
 
         task.wait(0.2)
 
-        sendDupeTrue()
+        
 
         local wsReady = false
 
