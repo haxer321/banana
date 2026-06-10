@@ -204,7 +204,7 @@ while task.wait() do
         local leaderstats = player:FindFirstChild("leaderstats")
         local gems = leaderstats and leaderstats:FindFirstChild("Gems")
 
-        if gems and gems.Value == 10000000 then
+        if gems and gems.Value == 5000000 then
             print("[INFO] Already at 10M, not reporting failure")
         elseif not frameFound then
             sentFail = true
