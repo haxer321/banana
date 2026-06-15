@@ -148,52 +148,55 @@ local function kickAndRejoin()
     task.spawn(function()
         task.wait(0.2)
         
-        local wsReady = false
+        local canRejoin = false
         
         -- Check if WebSocket exists before using it
         if ws and ws.OnMessage then
-            print("[KICK] Waiting for WebSocket ready signal")
+            print("[KICK] Waiting for server confirmation (Dupe = false, Check = true)...")
+            
             local connection
             connection = ws.OnMessage:Connect(function(msg)
                 local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
-                if ok and data and data.Check == true and data.Busy == false then
-                    print("[KICK] WebSocket ready signal received")
-                    wsReady = true
-                    if connection then connection:Disconnect() end
+                if ok and data and data.type == "state" then
+                    print(string.format("[KICK] Received state - Dupe: %s, Check: %s", tostring(data.data.Dupe), tostring(data.data.Check)))
+                    
+                    -- ONLY rejoin when Dupe is false AND Check is true
+                    if data.data.Dupe == false and data.data.Check == true then
+                        print("[KICK] Conditions met! Dupe=false, Check=true - Ready to rejoin")
+                        canRejoin = true
+                        if connection then connection:Disconnect() end
+                    else
+                        print("[KICK] Waiting... Dupe needs to be false, Check needs to be true")
+                    end
                 end
             end)
             
-            -- Timeout after 5 seconds
+            -- Timeout after 30 seconds (don't wait forever)
             task.spawn(function()
-                task.wait(5)
-                if not wsReady then
-                    print("[KICK] WebSocket timeout, proceeding anyway")
-                    wsReady = true
+                task.wait(30)
+                if not canRejoin then
+                    print("[KICK] Timeout after 30s - No valid state received")
+                    canRejoin = true -- Proceed anyway to avoid being stuck
                 end
             end)
             
-            while not wsReady do 
+            while not canRejoin do 
                 task.wait(0.5) 
             end
         else
-            print("[KICK] No WebSocket connection, waiting 2 seconds")
-            task.wait(2)
-            wsReady = true
+            print("[KICK] No WebSocket connection, waiting 5 seconds then rejoining")
+            task.wait(5)
+            canRejoin = true
         end
         
         print("[KICK] Teleporting back to game...")
-        while true do
-            pcall(function()
-                TeleportService:Teleport(game.PlaceId, player)
-            end)
-            task.wait(5)
-        end
+        TeleportService:Teleport(game.PlaceId, player)
     end)
     
     -- Small delay to ensure spawn runs
     task.wait(0.1)
     print("[KICK] Kicking player now")
-    player:Kick("Retrying...")
+    player:Kick("Waiting for server confirmation...")
 end
 
 -- ==================== MAIN LOOP ====================
