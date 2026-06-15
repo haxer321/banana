@@ -141,23 +141,47 @@ local staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
 
 -- ==================== KICK FUNCTION ====================
 local function kickAndRejoin()
+    print("[KICK] Starting kick and rejoin")
     sendDupeTrue()
-    player:Kick("Retrying...")
-
+    
+    -- Spawn rejoin task BEFORE kicking
     task.spawn(function()
         task.wait(0.2)
-
+        
         local wsReady = false
-
-        ws.OnMessage:Connect(function(msg)
-            local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
-            if ok and data.Check == true and data.Busy == false then
-                wsReady = true
+        
+        -- Check if WebSocket exists before using it
+        if ws and ws.OnMessage then
+            print("[KICK] Waiting for WebSocket ready signal")
+            local connection
+            connection = ws.OnMessage:Connect(function(msg)
+                local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
+                if ok and data and data.Check == true and data.Busy == false then
+                    print("[KICK] WebSocket ready signal received")
+                    wsReady = true
+                    if connection then connection:Disconnect() end
+                end
+            end)
+            
+            -- Timeout after 5 seconds
+            task.spawn(function()
+                task.wait(5)
+                if not wsReady then
+                    print("[KICK] WebSocket timeout, proceeding anyway")
+                    wsReady = true
+                end
+            end)
+            
+            while not wsReady do 
+                task.wait(0.5) 
             end
-        end)
-
-        while not wsReady do task.wait(0.5) end
-
+        else
+            print("[KICK] No WebSocket connection, waiting 2 seconds")
+            task.wait(2)
+            wsReady = true
+        end
+        
+        print("[KICK] Teleporting back to game...")
         while true do
             pcall(function()
                 TeleportService:Teleport(game.PlaceId, player)
@@ -165,21 +189,31 @@ local function kickAndRejoin()
             task.wait(5)
         end
     end)
+    
+    -- Small delay to ensure spawn runs
+    task.wait(0.1)
+    print("[KICK] Kicking player now")
+    player:Kick("Retrying...")
 end
 
 -- ==================== MAIN LOOP ====================
+print("[MAIN] Starting main loop")
+
 while task.wait() do
     local leaderstats = player:FindFirstChild("leaderstats")
     local gems = leaderstats and leaderstats:FindFirstChild("Gems")
 
     -- SUCCESS CONDITION
     if gems and gems.Value == 5000000 then
+        print(string.format("[MAIN] WIN CONDITION! Gems = %d", gems.Value))
         if not sentRecovered then
+            print("[MAIN] Sending recovered signal")
             sentRecovered = true
             pcall(function()
                 sendRecovered(player.Name)
             end)
         end
+        print("[MAIN] Calling kickAndRejoin")
         kickAndRejoin()
         break
     end
@@ -189,6 +223,7 @@ while task.wait() do
         local frameFound = false
         local elapsed = 0
 
+        print("[FAIL] Starting 20s frame check...")
         while elapsed < 20 do
             for _, child in ipairs(guiPath:GetChildren()) do
                 if child:IsA("Frame") then
@@ -201,11 +236,19 @@ while task.wait() do
             elapsed += 0.5
         end
 
+        local currentGems = nil
         local leaderstats = player:FindFirstChild("leaderstats")
-        local gems = leaderstats and leaderstats:FindFirstChild("Gems")
+        if leaderstats then
+            local gemsObj = leaderstats:FindFirstChild("Gems")
+            if gemsObj then
+                currentGems = gemsObj.Value
+            end
+        end
 
-        if gems and gems.Value == 5000000 then
-            print("[INFO] Already at 10M, not reporting failure")
+        print(string.format("[FAIL] Check complete - FrameFound: %s, Gems: %s", tostring(frameFound), tostring(currentGems)))
+
+        if currentGems == 5000000 then
+            print("[INFO] Already at 5M, not reporting failure")
         elseif not frameFound then
             sentFail = true
             print("[INFO] No frames found after 20s, reporting failure")
