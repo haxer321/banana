@@ -46,11 +46,10 @@ local function setupWebSocket()
         wsConnected = true
         print("[WS] Connected to server")
 
-        -- Send client_ready immediately (no init expected)
+        -- Send client_ready immediately
         ws:Send(HttpService:JSONEncode({ type = "client_ready" }))
 
         ws.OnMessage:Connect(function(msg)
-            -- Safely decode JSON
             local ok, data = pcall(function()
                 return HttpService:JSONDecode(msg)
             end)
@@ -58,15 +57,12 @@ local function setupWebSocket()
                 return
             end
 
-            -- Handle state messages (server sends { type="state", state={...} })
             if data.type == "state" and data.state then
                 local state = data.state
-                local dupe = state.Dupe
                 local check = state.Check
-                local busy = state.Busy
 
                 print(string.format("[WS] State - Dupe: %s, Check: %s, Busy: %s",
-                    tostring(dupe), tostring(check), tostring(busy)))
+                    tostring(state.Dupe), tostring(check), tostring(state.Busy)))
 
                 -- AFTER leaving: wait for Check to become true (next cycle)
                 if hasLeft and not readyToRejoin then
@@ -129,9 +125,7 @@ local function sendDupeTrue()
     sendWS({ Dupe = true })
 end
 
-local function sendCheckTrue()
-    sendWS({ Check = true })
-end
+-- NO sendCheckTrue() - REMOVED
 
 -- ==================== POSITION FIX ====================
 task.spawn(function()
@@ -166,7 +160,7 @@ local staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
 local function leaveAndWaitForNextCycle()
     print("[LEAVE] Account: " .. player.Name)
 
-    -- Send Dupe=true (one time)
+    -- Send Dupe=true (ONCE - all 4 accounts do this)
     sendDupeTrue()
     print("[LEAVE] Sent Dupe=true")
 
@@ -200,7 +194,7 @@ local function leaveAndWaitForNextCycle()
             end)
         end
 
-        -- Timeout after 5 minutes (avoid infinite wait)
+        -- Timeout after 5 minutes
         task.spawn(function()
             task.wait(300)
             if not readyToRejoin then
@@ -219,18 +213,15 @@ local function leaveAndWaitForNextCycle()
     end)
 end
 
--- ==================== AFTER REJOIN: COMPLETE DUPE ====================
-local function completeDupeAfterRejoin()
-    print("[COMPLETE] Rejoined! Sending Check=true to complete dupe...")
-    sendCheckTrue()
-    print("[COMPLETE] Check=true sent. Dupe finished.")
-end
+-- ==================== AFTER REJOIN: DO NOTHING ====================
+-- NO sendCheckTrue() - Just rejoin and let server handle the rest
 
--- Detect if we just rejoined (script restarts after teleport)
+-- Detect if we just rejoined
 task.spawn(function()
     task.wait(2)
     if hasLeft then
-        completeDupeAfterRejoin()
+        print("[REJOIN] Back in game. Waiting for next cycle...")
+        -- Do NOT send Check=true
     end
 end)
 
