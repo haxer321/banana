@@ -46,6 +46,9 @@ local function setupWebSocket()
         wsConnected = true
         print("[WS] Connected to server")
 
+        -- Send client_ready immediately (no init expected)
+        ws:Send(HttpService:JSONEncode({ type = "client_ready" }))
+
         ws.OnMessage:Connect(function(msg)
             print("[WS] Received:", msg)
 
@@ -54,25 +57,25 @@ local function setupWebSocket()
             end)
 
             if success and data then
-                if data.type == "init" then
-                    print("[WS] Handshake complete")
-                    ws:Send(HttpService:JSONEncode({ type = "client_ready" }))
-                elseif data.type == "update_ack" then
-                    print("[WS] Update accepted. Current Fails:", data.Fails)
-                elseif data.type == "state" then
-                    local dupe = data.data.Dupe
-                    local check = data.data.Check
+                if data.type == "state" then
+                    local dupe = data.state.Dupe
+                    local check = data.state.Check
+                    local busy = data.state.Busy
+                    local waitingOn = data.state.waitingOn
                     
-                    print(string.format("[WS] State - Dupe: %s, Check: %s", tostring(dupe), tostring(check)))
+                    print(string.format("[WS] State - Dupe: %s, Check: %s, Busy: %s, Waiting: %s", 
+                        tostring(dupe), tostring(check), tostring(busy), tostring(waitingOn)))
                     
-                    -- AFTER leaving, wait for Check to become TRUE (next cycle)
-                    if hasLeft and check == true then
-                        print("[WS] NEXT CYCLE! Check=true - Ready to rejoin!")
-                        if watchdogConnection then
-                            watchdogConnection:Disconnect()
+                    -- AFTER leaving: wait for Busy=false AND Check=false
+                    if hasLeft and not readyToRejoin then
+                        if busy == false and check == false then
+                            print("[WS] Busy=false & Check=false - Ready to rejoin!")
+                            readyToRejoin = true
+                            if watchdogConnection then watchdogConnection:Disconnect() end
                         end
-                        readyToRejoin = true
                     end
+                elseif data.type == "event" then
+                    print(string.format("[WS] Event: %s", data.event))
                 end
             end
         end)
@@ -103,29 +106,23 @@ local function sendWS(payload)
         pcall(function()
             ws:Send(HttpService:JSONEncode(payload))
         end)
-    else
-        print("[WS] Not connected, cannot send")
     end
 end
 
--- Add user to Fails
 local function sendLose(username)
     sendWS({ Lose = username })
     sendWS({ instaFail = true })
 end
 
--- Remove user from Fails (RECOVER)
 local function sendRecovered(username)
     sendWS({ Recovered = username })
     sendWS({ instaFail = false })
 end
 
--- Send Dupe true (each account sends ONCE)
 local function sendDupeTrue()
     sendWS({ Dupe = true })
 end
 
--- Send Check true (completes dupe after rejoining)
 local function sendCheckTrue()
     sendWS({ Check = true })
 end
@@ -160,34 +157,34 @@ local idValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForCh
 local staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
 
 -- ==================== LEAVE FUNCTION ====================
-local function leaveAndWaitForNextCycle()
+local function leaveAndWait()
     print("[LEAVE] Account: " .. player.Name)
     
-    -- Send Dupe=true ONE TIME (will count toward threshold)
+    -- Send Dupe=true ONE TIME
     sendDupeTrue()
-    print("[LEAVE] Sent Dupe=true - Waiting for server to set Check=false...")
+    print("[LEAVE] Sent Dupe=true")
     
-    -- Small delay for server to process
-    task.wait(1)
+    -- Small delay
+    task.wait(0.5)
     
-    -- Leave/Kick immediately
+    -- Leave
     print("[LEAVE] Leaving game...")
     hasLeft = true
-    player:Kick("Dupe sent - Waiting for next cycle to rejoin")
+    player:Kick("Dupe sent - waiting for Busy=false & Check=false")
     
-    -- Watchdog: Wait for Check to become TRUE (next cycle)
+    -- Watchdog: Wait for Busy=false AND Check=false
     task.spawn(function()
-        print("[WATCHDOG] Waiting for Check=true (next cycle)...")
+        print("[WATCHDOG] Waiting for Busy=false AND Check=false...")
         
         if ws and ws.OnMessage then
             watchdogConnection = ws.OnMessage:Connect(function(msg)
                 local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
                 if ok and data and data.type == "state" then
-                    local check = data.data.Check
-                    print(string.format("[WATCHDOG] Current Check: %s", tostring(check)))
+                    local busy = data.state.Busy
+                    local check = data.state.Check
                     
-                    if check == true then
-                        print("[WATCHDOG] NEXT CYCLE! Check=true - Rejoining now!")
+                    if busy == false and check == false then
+                        print("[WATCHDOG] Conditions met! Rejoining...")
                         readyToRejoin = true
                         if watchdogConnection then watchdogConnection:Disconnect() end
                     end
@@ -195,11 +192,11 @@ local function leaveAndWaitForNextCycle()
             end)
         end
         
-        -- Timeout after 5 minutes
+        -- Timeout after 120 seconds
         task.spawn(function()
-            task.wait(300)
+            task.wait(120)
             if not readyToRejoin then
-                print("[WATCHDOG] Timeout - Forcing rejoin")
+                print("[WATCHDOG] Timeout - forcing rejoin")
                 readyToRejoin = true
             end
         end)
@@ -216,14 +213,36 @@ end
 
 -- ==================== REJOIN AND COMPLETE ====================
 local function onRejoinComplete()
-    print("[COMPLETE] Rejoined! Sending Check=true to complete dupe")
-    sendCheckTrue()
-    print("[COMPLETE] Check=true sent - Dupe completed!")
+    print("[COMPLETE] Rejoined! Now waiting for Check=true...")
+    
+    -- Wait for Check to become true (next cycle)
+    task.spawn(function()
+        local checkConnection = nil
+        checkConnection = ws.OnMessage:Connect(function(msg)
+            local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
+            if ok and data and data.type == "state" then
+                if data.state.Check == true then
+                    print("[COMPLETE] Check=true detected! Sending Check=true...")
+                    sendCheckTrue()
+                    print("[COMPLETE] Dupe completed!")
+                    if checkConnection then checkConnection:Disconnect() end
+                end
+            end
+        end)
+        
+        -- Timeout after 60 seconds
+        task.spawn(function()
+            task.wait(60)
+            print("[COMPLETE] Timeout - sending Check=true anyway")
+            sendCheckTrue()
+            if checkConnection then checkConnection:Disconnect() end
+        end)
+    end)
 end
 
 -- Check if we just rejoined
 task.spawn(function()
-    task.wait(2)
+    task.wait(3)
     if hasLeft then
         onRejoinComplete()
     end
@@ -239,24 +258,22 @@ while task.wait() do
     -- SUCCESS CONDITION - Got 5M gems
     if gems and gems.Value == 5000000 then
         if not sentRecovered and not hasLeft then
-            print(string.format("[MAIN] Gems = %d - RECOVERED! Sending signal...", gems.Value))
+            print(string.format("[MAIN] Gems = %d - RECOVERED!", gems.Value))
             sentRecovered = true
             
-            -- Send recovered to server
             pcall(function()
                 sendRecovered(player.Name)
             end)
             
             task.wait(0.5)
             
-            -- Send Dupe and LEAVE
             print("[MAIN] Sending Dupe=true and leaving...")
-            leaveAndWaitForNextCycle()
+            leaveAndWait()
             break
         end
     end
 
-    -- FAIL CONDITION (same as before)
+    -- FAIL CONDITION
     if not sentFail then
         local frameFound = false
         local elapsed = 0
@@ -270,7 +287,7 @@ while task.wait() do
             end
             if frameFound then break end
             task.wait(0.5)
-            elapsed += 0.5
+            elapsed = elapsed + 0.5
         end
 
         local currentGems = nil
