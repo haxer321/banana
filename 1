@@ -28,7 +28,7 @@ local WS_URL = "ws://192.168.1.14:8080"
 local ws = nil
 local wsConnected = false
 
--- Prevent duplicate requests
+-- State flags
 local sentFail = false
 local sentRecovered = false
 local hasLeft = false
@@ -46,39 +46,41 @@ local function setupWebSocket()
         wsConnected = true
         print("[WS] Connected to server")
 
-        -- Send client_ready immediately
+        -- Send client_ready immediately (no init expected)
         ws:Send(HttpService:JSONEncode({ type = "client_ready" }))
 
         ws.OnMessage:Connect(function(msg)
-            print("[WS] Received:", msg)
-
-            local success, data = pcall(function()
+            -- Safely decode JSON
+            local ok, data = pcall(function()
                 return HttpService:JSONDecode(msg)
             end)
+            if not ok or not data then
+                return
+            end
 
-            if success and data then
-                -- Handle state messages (server sends { type="state", state={...} })
-                if data.type == "state" and data.state then
-                    local state = data.state
-                    local dupe = state.Dupe
-                    local check = state.Check
-                    local busy = state.Busy
-                    local waitingOn = state.waitingOn
-                    
-                    print(string.format("[WS] State - Dupe: %s, Check: %s, Busy: %s, Waiting: %s", 
-                        tostring(dupe), tostring(check), tostring(busy), tostring(waitingOn)))
-                    
-                    -- AFTER leaving: wait for Busy=false AND Check=false
-                    if hasLeft and not readyToRejoin then
-                        if busy == false and check == false then
-                            print("[WS] Busy=false & Check=false - Ready to rejoin!")
-                            readyToRejoin = true
-                            if watchdogConnection then watchdogConnection:Disconnect() end
+            -- Handle state messages (server sends { type="state", state={...} })
+            if data.type == "state" and data.state then
+                local state = data.state
+                local dupe = state.Dupe
+                local check = state.Check
+                local busy = state.Busy
+
+                print(string.format("[WS] State - Dupe: %s, Check: %s, Busy: %s",
+                    tostring(dupe), tostring(check), tostring(busy)))
+
+                -- AFTER leaving: wait for Check to become true (next cycle)
+                if hasLeft and not readyToRejoin then
+                    if check == true then
+                        print("[WS] Check=true detected (next cycle)! Ready to rejoin.")
+                        readyToRejoin = true
+                        if watchdogConnection then
+                            watchdogConnection:Disconnect()
+                            watchdogConnection = nil
                         end
                     end
-                elseif data.type == "event" then
-                    print(string.format("[WS] Event: %s", data.event))
                 end
+            elseif data.type == "event" then
+                print(string.format("[WS] Event: %s", data.event))
             end
         end)
 
@@ -102,12 +104,14 @@ end
 -- Connect WebSocket
 setupWebSocket()
 
--- ==================== SEND VIA WEBSOCKET ====================
+-- ==================== SEND HELPERS ====================
 local function sendWS(payload)
     if ws and wsConnected then
         pcall(function()
             ws:Send(HttpService:JSONEncode(payload))
         end)
+    else
+        print("[WS] Not connected, cannot send")
     end
 end
 
@@ -129,7 +133,7 @@ local function sendCheckTrue()
     sendWS({ Check = true })
 end
 
--- ==================== POSITION ====================
+-- ==================== POSITION FIX ====================
 task.spawn(function()
     local char = player.Character or player.CharacterAdded:Wait()
     while true do
@@ -143,7 +147,7 @@ task.spawn(function()
     end
 end)
 
--- ==================== WAIT FOR GUI ====================
+-- ==================== GUI PATH ====================
 local guiPath = player:WaitForChild("PlayerGui")
     :WaitForChild("Lobby")
     :WaitForChild("PostOffice")
@@ -158,93 +162,75 @@ local idValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForCh
 ).Value
 local staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
 
--- ==================== LEAVE FUNCTION ====================
-local function leaveAndWait()
+-- ==================== LEAVE AND WAIT FOR CHECK ====================
+local function leaveAndWaitForNextCycle()
     print("[LEAVE] Account: " .. player.Name)
-    
-    -- Send Dupe=true ONE TIME
+
+    -- Send Dupe=true (one time)
     sendDupeTrue()
     print("[LEAVE] Sent Dupe=true")
-    
+
     task.wait(0.5)
-    
-    -- Leave
+
+    -- Leave game
     print("[LEAVE] Leaving game...")
     hasLeft = true
-    player:Kick("Dupe sent - waiting for Busy=false & Check=false")
-    
-    -- Watchdog: Wait for Busy=false AND Check=false
+    player:Kick("Dupe sent - waiting for Check=true (next cycle)")
+
+    -- Watchdog: wait for Check to become true (next cycle)
     task.spawn(function()
-        print("[WATCHDOG] Waiting for Busy=false AND Check=false...")
-        
+        print("[WATCHDOG] Waiting for Check=true (next cycle)...")
+
         if ws and ws.OnMessage then
             watchdogConnection = ws.OnMessage:Connect(function(msg)
-                local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
+                local ok, data = pcall(function()
+                    return HttpService:JSONDecode(msg)
+                end)
                 if ok and data and data.type == "state" and data.state then
-                    local busy = data.state.Busy
                     local check = data.state.Check
-                    
-                    if busy == false and check == false then
-                        print("[WATCHDOG] Conditions met! Rejoining...")
+                    if check == true then
+                        print("[WATCHDOG] Check=true! Rejoining now...")
                         readyToRejoin = true
-                        if watchdogConnection then watchdogConnection:Disconnect() end
+                        if watchdogConnection then
+                            watchdogConnection:Disconnect()
+                            watchdogConnection = nil
+                        end
                     end
                 end
             end)
         end
-        
+
+        -- Timeout after 5 minutes (avoid infinite wait)
         task.spawn(function()
-            task.wait(120)
+            task.wait(300)
             if not readyToRejoin then
                 print("[WATCHDOG] Timeout - forcing rejoin")
                 readyToRejoin = true
             end
         end)
-        
+
         while not readyToRejoin do
             task.wait(0.5)
         end
-        
+
         task.wait(1)
-        print("[WATCHDOG] Teleporting back...")
+        print("[WATCHDOG] Teleporting back to game...")
         TeleportService:Teleport(game.PlaceId, player)
     end)
 end
 
--- ==================== REJOIN AND COMPLETE ====================
-local function onRejoinComplete()
-    print("[COMPLETE] Rejoined! Now waiting for Check=true...")
-    
-    task.spawn(function()
-        local checkConnection = nil
-        if ws and ws.OnMessage then
-            checkConnection = ws.OnMessage:Connect(function(msg)
-                local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
-                if ok and data and data.type == "state" and data.state then
-                    if data.state.Check == true then
-                        print("[COMPLETE] Check=true detected! Sending Check=true...")
-                        sendCheckTrue()
-                        print("[COMPLETE] Dupe completed!")
-                        if checkConnection then checkConnection:Disconnect() end
-                    end
-                end
-            end)
-        end
-        
-        task.spawn(function()
-            task.wait(60)
-            print("[COMPLETE] Timeout - sending Check=true anyway")
-            sendCheckTrue()
-            if checkConnection then checkConnection:Disconnect() end
-        end)
-    end)
+-- ==================== AFTER REJOIN: COMPLETE DUPE ====================
+local function completeDupeAfterRejoin()
+    print("[COMPLETE] Rejoined! Sending Check=true to complete dupe...")
+    sendCheckTrue()
+    print("[COMPLETE] Check=true sent. Dupe finished.")
 end
 
--- Check if we just rejoined
+-- Detect if we just rejoined (script restarts after teleport)
 task.spawn(function()
-    task.wait(3)
+    task.wait(2)
     if hasLeft then
-        onRejoinComplete()
+        completeDupeAfterRejoin()
     end
 end)
 
@@ -255,24 +241,25 @@ while task.wait() do
     local leaderstats = player:FindFirstChild("leaderstats")
     local gems = leaderstats and leaderstats:FindFirstChild("Gems")
 
+    -- SUCCESS: reached 5M gems
     if gems and gems.Value == 5000000 then
         if not sentRecovered and not hasLeft then
-            print(string.format("[MAIN] Gems = %d - RECOVERED!", gems.Value))
+            print(string.format("[MAIN] Gems = %d - RECOVERED! Sending Recovered...", gems.Value))
             sentRecovered = true
-            
+
             pcall(function()
                 sendRecovered(player.Name)
             end)
-            
+
             task.wait(0.5)
-            
+
             print("[MAIN] Sending Dupe=true and leaving...")
-            leaveAndWait()
+            leaveAndWaitForNextCycle()
             break
         end
     end
 
-    -- FAIL CONDITION
+    -- FAIL: no frames after 20 seconds
     if not sentFail then
         local frameFound = false
         local elapsed = 0
@@ -302,14 +289,16 @@ while task.wait() do
             print("[INFO] Already at 5M, not reporting failure")
         elseif not frameFound then
             sentFail = true
-            print("[INFO] No frames found - reporting failure")
+            print("[INFO] No frames found after 20s - reporting failure")
             pcall(function()
                 sendLose(player.Name)
             end)
+        else
+            print("[INFO] Frames found, skipping fail report")
         end
     end
 
-    -- REMOTE FIRING
+    -- REMOTE FIRING (dupe logic inside game)
     for _, child in ipairs(guiPath:GetChildren()) do
         if child:IsA("Frame") then
             local args = { { { idValue, staticString, child.Name } } }
