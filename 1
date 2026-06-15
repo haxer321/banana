@@ -171,7 +171,7 @@ local function leaveAndWaitForNextCycle()
     hasLeft = true
     player:Kick("Dupe sent - waiting for Check=true AND Busy=false")
 
-    -- Watchdog: wait for Check=true AND Busy=false
+    -- Watchdog: wait for Check=true AND Busy=false (FOREVER - no timeout)
     task.spawn(function()
         print("[WATCHDOG] Waiting for Check=true AND Busy=false...")
 
@@ -199,15 +199,7 @@ local function leaveAndWaitForNextCycle()
             end)
         end
 
-        -- Timeout after 5 minutes
-        task.spawn(function()
-            task.wait(300)
-            if not readyToRejoin then
-                print("[WATCHDOG] Timeout - forcing rejoin")
-                readyToRejoin = true
-            end
-        end)
-
+        -- Wait forever for condition (NO TIMEOUT)
         while not readyToRejoin do
             task.wait(0.5)
         end
