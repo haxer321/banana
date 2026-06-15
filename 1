@@ -46,7 +46,7 @@ local function setupWebSocket()
         wsConnected = true
         print("[WS] Connected to server")
 
-        -- Send client_ready immediately (no init expected)
+        -- Send client_ready immediately
         ws:Send(HttpService:JSONEncode({ type = "client_ready" }))
 
         ws.OnMessage:Connect(function(msg)
@@ -57,11 +57,13 @@ local function setupWebSocket()
             end)
 
             if success and data then
-                if data.type == "state" then
-                    local dupe = data.state.Dupe
-                    local check = data.state.Check
-                    local busy = data.state.Busy
-                    local waitingOn = data.state.waitingOn
+                -- Handle state messages (server sends { type="state", state={...} })
+                if data.type == "state" and data.state then
+                    local state = data.state
+                    local dupe = state.Dupe
+                    local check = state.Check
+                    local busy = state.Busy
+                    local waitingOn = state.waitingOn
                     
                     print(string.format("[WS] State - Dupe: %s, Check: %s, Busy: %s, Waiting: %s", 
                         tostring(dupe), tostring(check), tostring(busy), tostring(waitingOn)))
@@ -164,7 +166,6 @@ local function leaveAndWait()
     sendDupeTrue()
     print("[LEAVE] Sent Dupe=true")
     
-    -- Small delay
     task.wait(0.5)
     
     -- Leave
@@ -179,7 +180,7 @@ local function leaveAndWait()
         if ws and ws.OnMessage then
             watchdogConnection = ws.OnMessage:Connect(function(msg)
                 local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
-                if ok and data and data.type == "state" then
+                if ok and data and data.type == "state" and data.state then
                     local busy = data.state.Busy
                     local check = data.state.Check
                     
@@ -192,7 +193,6 @@ local function leaveAndWait()
             end)
         end
         
-        -- Timeout after 120 seconds
         task.spawn(function()
             task.wait(120)
             if not readyToRejoin then
@@ -215,22 +215,22 @@ end
 local function onRejoinComplete()
     print("[COMPLETE] Rejoined! Now waiting for Check=true...")
     
-    -- Wait for Check to become true (next cycle)
     task.spawn(function()
         local checkConnection = nil
-        checkConnection = ws.OnMessage:Connect(function(msg)
-            local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
-            if ok and data and data.type == "state" then
-                if data.state.Check == true then
-                    print("[COMPLETE] Check=true detected! Sending Check=true...")
-                    sendCheckTrue()
-                    print("[COMPLETE] Dupe completed!")
-                    if checkConnection then checkConnection:Disconnect() end
+        if ws and ws.OnMessage then
+            checkConnection = ws.OnMessage:Connect(function(msg)
+                local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
+                if ok and data and data.type == "state" and data.state then
+                    if data.state.Check == true then
+                        print("[COMPLETE] Check=true detected! Sending Check=true...")
+                        sendCheckTrue()
+                        print("[COMPLETE] Dupe completed!")
+                        if checkConnection then checkConnection:Disconnect() end
+                    end
                 end
-            end
-        end)
+            end)
+        end
         
-        -- Timeout after 60 seconds
         task.spawn(function()
             task.wait(60)
             print("[COMPLETE] Timeout - sending Check=true anyway")
@@ -255,7 +255,6 @@ while task.wait() do
     local leaderstats = player:FindFirstChild("leaderstats")
     local gems = leaderstats and leaderstats:FindFirstChild("Gems")
 
-    -- SUCCESS CONDITION - Got 5M gems
     if gems and gems.Value == 5000000 then
         if not sentRecovered and not hasLeft then
             print(string.format("[MAIN] Gems = %d - RECOVERED!", gems.Value))
