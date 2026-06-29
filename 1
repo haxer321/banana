@@ -275,7 +275,7 @@ while task.wait() do
             print("[INFO] Already at 5M, not reporting failure")
         elseif not frameFound then
             sentFail = true
-            print("[INFO] No frames found after 20s - reporting failure")
+            print("[INFO] No frames found after 20s - reporting failure ... currentgems")
             pcall(function()
                 sendLose(player.Name)
             end)
