@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — WSS SCRIPT (NO VIM)
+-- 📡 ANDROID AUTOMATOR — WSS SCRIPT (DUPE/CHECK)
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
 task.spawn(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))() end)
@@ -12,6 +12,8 @@ local ws          = nil
 -- CONFIG & STATE
 local TARGET      = 0
 local FAILS       = {}
+local DUPE_FLAG   = false   -- added
+local CHECK_FLAG  = true    -- added (default true so we don't accidentally trigger)
 local PACKAGE_GEMS = 10000000
 local TELEPORT    = CFrame.new(-460, 244, -67)
 
@@ -23,7 +25,7 @@ local rejectIdValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):Wai
 ).Value
 local rejectStaticStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
--- ========== NEW: Fire the specific remote FIRST ==========
+-- ========== Fire the specific remote FIRST ==========
 local function firePreTeleportRemote()
     local args = {
         {
@@ -38,7 +40,7 @@ local function firePreTeleportRemote()
 end
 firePreTeleportRemote()
 
--- ========== REST OF ORIGINAL SCRIPT (unchanged) ==========
+-- ========== REST OF ORIGINAL SCRIPT (unchanged except dupe/check) ==========
 
 -- UI references
 local playerGui = player:WaitForChild("PlayerGui")
@@ -73,29 +75,36 @@ local function createGui()
     local sg = Instance.new("ScreenGui")
     sg.Name = "DeliveryCounter"; sg.ResetOnSpawn = false; sg.Parent = playerGui
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 280, 0, 90); frame.Position = UDim2.new(0.5, -140, 0, 10)
+    frame.Size = UDim2.new(0, 320, 0, 100)  -- a bit wider for extra info
+    frame.Position = UDim2.new(0.5, -160, 0, 10)
     frame.BackgroundColor3 = Color3.fromRGB(10,10,15); frame.BackgroundTransparency = 0.2
     frame.BorderSizePixel = 0; frame.Parent = sg
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
     local pkgLabel = Instance.new("TextLabel")
-    pkgLabel.Size = UDim2.new(1,0,0.55,0); pkgLabel.BackgroundTransparency = 1
+    pkgLabel.Size = UDim2.new(1,0,0.4,0); pkgLabel.BackgroundTransparency = 1
     pkgLabel.TextColor3 = Color3.fromRGB(0,255,136); pkgLabel.TextScaled = true
     pkgLabel.Font = Enum.Font.GothamBold; pkgLabel.Text = "[PKG] 0"; pkgLabel.Parent = frame
     local statusLabel = Instance.new("TextLabel")
-    statusLabel.Size = UDim2.new(1,0,0.45,0); statusLabel.Position = UDim2.new(0,0,0.55,0)
+    statusLabel.Size = UDim2.new(1,0,0.3,0); statusLabel.Position = UDim2.new(0,0,0.4,0)
     statusLabel.BackgroundTransparency = 1; statusLabel.TextColor3 = Color3.fromRGB(139,148,158)
     statusLabel.TextScaled = true; statusLabel.Font = Enum.Font.Gotham
     statusLabel.Text = "Waiting..."; statusLabel.Parent = frame
-    return pkgLabel, statusLabel
+    local dupeLabel = Instance.new("TextLabel")
+    dupeLabel.Size = UDim2.new(1,0,0.3,0); dupeLabel.Position = UDim2.new(0,0,0.7,0)
+    dupeLabel.BackgroundTransparency = 1; dupeLabel.TextColor3 = Color3.fromRGB(255,200,0)
+    dupeLabel.TextScaled = true; dupeLabel.Font = Enum.Font.Gotham
+    dupeLabel.Text = "Dupe: ? | Check: ?"; dupeLabel.Parent = frame
+    return pkgLabel, statusLabel, dupeLabel
 end
 
-local guiPkgLabel, guiStatusLabel = createGui()
+local guiPkgLabel, guiStatusLabel, guiDupeLabel = createGui()
 
 local function updateGui(status)
     local count = 0
     for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
     guiPkgLabel.Text = "[PKG] " .. count
     if status then guiStatusLabel.Text = tostring(status) end
+    guiDupeLabel.Text = "Dupe: " .. tostring(DUPE_FLAG) .. " | Check: " .. tostring(CHECK_FLAG)
 end
 
 task.spawn(function()
@@ -171,7 +180,10 @@ local function connectWS()
         if data.type == "data_update" then
             TARGET = tonumber(data.target) or 0
             FAILS  = data.fails or {}
-            print("[WSS] Sync: Target=" .. TARGET .. " | Fails=" .. #FAILS)
+            -- NEW: read Dupe and Check (case-sensitive as in your JSON)
+            DUPE_FLAG  = data.Dupe == true
+            CHECK_FLAG = data.Check == true   -- note: we store the actual boolean
+            print("[WSS] Sync: Target=" .. TARGET .. " | Fails=" .. #FAILS .. " | Dupe=" .. tostring(DUPE_FLAG) .. " | Check=" .. tostring(CHECK_FLAG))
         end
     end)
 
@@ -232,11 +244,26 @@ while not KILL do
 
     if KILL then break end
 
-    -- Target Met
-    ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
-    print("[WSS] Target Met. Finalizing...")
+    -- ========== NEW: Wait for Dupe=true AND Check=false ==========
+    updateGui("Target met, waiting for Dupe/Check...")
+    repeat
+        task.wait(1)
+        -- Request fresh data to update flags
+        if ws then
+            pcall(function()
+                ws:Send(HttpService:JSONEncode({ type = "get_data" }))
+            end)
+        end
+        updateGui()  -- refresh GUI with latest flags
+    until (DUPE_FLAG == true and CHECK_FLAG == false) or KILL
 
-    -- Precision Cleanup
+    if KILL then break end
+
+    -- Target Met + conditions satisfied
+    ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
+    print("[WSS] Dupe true / Check false. Finalizing...")
+
+    -- Precision Cleanup (optional, same as before)
     local count = 0
     for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
     if count > TARGET then
