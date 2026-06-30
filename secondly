@@ -1,159 +1,40 @@
 -- =============================================
--- PRIORITY AUTH — soft takeover, never blocks loading
+-- 📡 ANDROID AUTOMATOR — RESILIENT LUA SCRIPT
 -- =============================================
+
+-- Ensure game is loaded before anything else
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local Players         = game:GetService("Players")
 local HttpService     = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local GuiService      = game:GetService("GuiService")
+local RunService      = game:GetService("RunService")
+
 local player          = Players.LocalPlayer
 local SERVER_IP       = "http://localhost:8080"
 local requestFunc     = syn and syn.request or http and http.request or request
 
-local function getPriority()
-    local ok, res = pcall(function()
-        return requestFunc({ Url = SERVER_IP .. "/priority", Method = "GET" })
-    end)
-    if ok and res and res.Body then
-        local ok2, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
-        if ok2 and data then return data end
-    end
-    return nil
-end
-
-local priority = getPriority()
-if not priority or priority.sendto ~= player.Name then
-    -- Attempt to take over priority
-    pcall(function()
-        requestFunc({
-            Url = SERVER_IP .. "/priority/set",
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode({ username = player.Name })
-        })
-    end)
-    task.wait(1)
-    priority = getPriority()
-    if not priority or priority.sendto ~= player.Name then
-        print("[AUTH] Could not set priority — continuing anyway (heartbeat will retry)")
-    else
-        print("[AUTH] Priority confirmed — loaded script")
-    end
-else
-    print("[AUTH] Priority already confirmed — loaded script")
-end
-
 -- =============================================
--- CONFIGURATION VARIABLES
+-- CONFIGURATION
 -- =============================================
-local PACKAGE_GEMS       = 10000000 -- 10 million gems per package
+local PACKAGE_GEMS       = 10000000 
 local TELEPORT_CFRAME    = CFrame.new(-460, 244, -67)
 local KILL_ON_ERROR      = true
 
 -- =============================================
--- 0. INITIALIZATION
--- =============================================
-repeat task.wait() until game:IsLoaded()
-
-local ReplicatedStorage   = game:GetService("ReplicatedStorage")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local GuiService          = game:GetService("GuiService")
-
--- =============================================
--- KILL SWITCH
--- =============================================
-local KILL = false
-local STOP = false
-local function killEverything()
-    if KILL then return end
-    KILL = true
-    print("[KILL] Stopping everything...")
-    local pGui = player:FindFirstChild("PlayerGui")
-    if pGui then
-        local counter = pGui:FindFirstChild("DeliveryCounter")
-        if counter then counter:Destroy() end
-    end
-end
-
-if KILL_ON_ERROR then
-    GuiService.ErrorMessageChanged:Connect(function()
-        if GuiService.ErrorMessage and GuiService.ErrorMessage ~= "" then
-            killEverything()
-        end
-    end)
-    Players.PlayerRemoving:Connect(function(p)
-        if p == player then killEverything() end
-    end)
-end
-
-local char = player.Character or player.CharacterAdded:Wait()
-repeat task.wait() until char:FindFirstChild("HumanoidRootPart")
-task.wait(5)
-
-task.spawn(function()
-    while not KILL do
-        local c = player.Character or player.CharacterAdded:Wait()
-        local hrp = c:FindFirstChild("HumanoidRootPart")
-        if hrp then hrp.CFrame = TELEPORT_CFRAME break end
-        task.wait(1)
-    end
-end)
-
-local playerGui  = player:WaitForChild("PlayerGui")
-local loadingGui = playerGui:FindFirstChild("LoadingGui")
-if loadingGui then
-    repeat task.wait(0.05) until not loadingGui.Parent
-    task.wait(5)
-end
-print("[LOAD] Game fully loaded")
-
--- =============================================
--- REMOTE + IDs
--- =============================================
-local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
-
-local rejectIdValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
-    "RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S"
-).Value
-local rejectStaticStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
-
-local scrollingFrame = playerGui:WaitForChild("Lobby")
-    :WaitForChild("PostOffice"):WaitForChild("Menus")
-    :WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
-local menusGui      = playerGui.Lobby.PostOffice.Menus
-
--- =============================================
--- STATE
--- =============================================
-local myUsername       = player.Name
-local rejectedUsers    = {}
-
-task.spawn(function()
-    local lobby = playerGui:WaitForChild("Lobby", 30)
-    if not lobby then return end
-    local postOffice = lobby:FindFirstChild("PostOffice")
-    if not postOffice then return end
-    postOffice.AncestryChanged:Connect(function(_, parent)
-        if not parent and not STOP and not KILL then
-            STOP = true
-        end
-    end)
-end)
-
--- =============================================
 -- HTTP HELPERS
 -- =============================================
-if not requestFunc then error("No request function") end
-
 local function safeRequest(options)
-    if KILL then return nil end
     local ok, res = pcall(function() return requestFunc(options) end)
     return ok and res or nil
 end
 
-local function getData()
-    local res = safeRequest({ Url = SERVER_IP .. "/data", Method = "GET" })
+local function getPriority()
+    local res = safeRequest({ Url = SERVER_IP .. "/priority", Method = "GET" })
     if res and res.Body then
-        local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+        local ok, data = pcall(pcall, HttpService.JSONDecode, HttpService, res.Body)
         if ok then return data end
     end
     return nil
@@ -162,34 +43,59 @@ end
 local function getCurrentTarget()
     local res = safeRequest({ Url = SERVER_IP .. "/current-target", Method = "GET" })
     if res and res.Body then
-        local target = tonumber(res.Body)
-        return target or 0
+        return tonumber(res.Body) or 0
     end
     return 0
 end
 
 local function setServerState(s)
-    if KILL then return end
     safeRequest({
         Url     = SERVER_IP .. "/data",
         Method  = "POST",
         Headers = { ["Content-Type"] = "application/json" },
         Body    = HttpService:JSONEncode({ State = tostring(s) })
     })
-    print("[STATE] -> " .. s)
-end
-
-local function signalComplete()
-    if KILL then return end
-    print("[COMPLETE] Signaling Android App to logout and switch...")
-    safeRequest({ Url = SERVER_IP .. "/Complete", Method = "GET" })
 end
 
 -- =============================================
--- GEMS & PACKAGES
+-- 🛡️ PRIORITY SYSTEM
 -- =============================================
+task.spawn(function()
+    while true do
+        local priority = getPriority()
+        if not priority or priority.sendto ~= player.Name then
+            -- Take over priority
+            safeRequest({
+                Url = SERVER_IP .. "/priority/set",
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode({ username = player.Name })
+            })
+            print("[AUTH] Priority requested")
+        end
+        -- Heartbeat (Android App uses this to stay alive)
+        safeRequest({ Url = SERVER_IP .. "/priority-heartbeat?user=" .. player.Name, Method = "GET" })
+        task.wait(10)
+    end
+end)
+
+-- =============================================
+-- 🛠️ UI & REJECT SYSTEM
+-- =============================================
+local STOP = false
+local KILL = false
+
+local playerGui  = player:WaitForChild("PlayerGui")
+local scrollingFrame = playerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus"):WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
+local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
+local rejectIdValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
+local rejectStaticStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
+
+local function rejectFrameByName(frameName)
+    remote:FireServer(unpack({ { { rejectIdValue, rejectStaticStr, frameName } } }))
+end
+
 local function countPackages()
-    if KILL then return 0 end
     local count = 0
     for _, child in ipairs(scrollingFrame:GetChildren()) do
         if child:IsA("Frame") then count += 1 end
@@ -197,217 +103,80 @@ local function countPackages()
     return count
 end
 
+-- =============================================
+-- 📺 OVERLAY GUI
+-- =============================================
 local guiPkgLabel, guiStatusLabel
-
--- =============================================
--- REJECT SYSTEM
--- =============================================
-local function unblockAllUsers()
-    if KILL then return end
-    for u in pairs(rejectedUsers) do rejectedUsers[u] = nil end
-end
-
-local function rejectFrameByName(frameName, maxWait)
-    if KILL then return false end
-    maxWait = maxWait or 15
-    local elapsed = 0
-    while elapsed < maxWait do
-        local stillThere = false
-        for _, frame in ipairs(scrollingFrame:GetChildren()) do
-            if frame.Name == frameName then stillThere = true break end
-        end
-        if not stillThere then return true end
-        remote:FireServer(unpack({ { { rejectIdValue, rejectStaticStr, frameName } } }))
-        task.wait(0.1); elapsed += 0.1
-    end
-    return false
-end
-
-local function processAllFailedUsers(failsList)
-    if KILL or type(failsList) ~= "table" then return end
-    for _, user in ipairs(failsList) do
-        if not rejectedUsers[user] then
-            for _, frame in ipairs(scrollingFrame:GetChildren()) do
-                if frame:IsA("Frame") then
-                    local fromBox = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
-                    if fromBox and fromBox:IsA("TextBox") and fromBox.Text:gsub("@","") == user then
-                        if rejectFrameByName(frame.Name, 15) then rejectedUsers[user] = true end
-                        break
-                    end
-                end
-            end
-        end
-    end
-end
-
--- =============================================
--- GUI
--- =============================================
 local function createGui()
-    if KILL then return end
-    local existing = playerGui:FindFirstChild("DeliveryCounter")
-    if existing then existing:Destroy() end
-    local sg = Instance.new("ScreenGui")
-    sg.Name = "DeliveryCounter"; sg.ResetOnSpawn = false; sg.DisplayOrder = 999; sg.Parent = playerGui
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 280, 0, 90); frame.Position = UDim2.new(0.5, -140, 0, 10)
-    frame.BackgroundColor3 = Color3.fromRGB(10,10,15); frame.BackgroundTransparency = 0.2
-    frame.BorderSizePixel = 0; frame.Parent = sg
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
-    local pkg = Instance.new("TextLabel")
-    pkg.Size = UDim2.new(1,0,0.55,0); pkg.BackgroundTransparency = 1
-    pkg.TextColor3 = Color3.fromRGB(0,255,136); pkg.TextScaled = true
-    pkg.Font = Enum.Font.GothamBold; pkg.Text = "[PKG] 0"; pkg.Parent = frame
-    local status = Instance.new("TextLabel")
-    status.Size = UDim2.new(1,0,0.45,0); status.Position = UDim2.new(0,0,0.55,0)
-    status.BackgroundTransparency = 1; status.TextColor3 = Color3.fromRGB(139,148,158)
-    status.TextScaled = true; status.Font = Enum.Font.Gotham
-    status.Text = "Waiting for target..."; status.Parent = frame
-    guiPkgLabel = pkg; guiStatusLabel = status
+    local sg = Instance.new("ScreenGui", playerGui)
+    sg.Name = "DeliveryCounter"; sg.ResetOnSpawn = false
+    local frame = Instance.new("Frame", sg)
+    frame.Size = UDim2.new(0, 250, 0, 70); frame.Position = UDim2.new(0.5, -125, 0, 20)
+    frame.BackgroundColor3 = Color3.new(0,0,0); frame.BackgroundTransparency = 0.3
+    guiPkgLabel = Instance.new("TextLabel", frame)
+    guiPkgLabel.Size = UDim2.new(1,0,0.6,0); guiPkgLabel.TextColor3 = Color3.new(0,1,0); guiPkgLabel.Text = "[PKG] 0"; guiPkgLabel.TextScaled = true
+    guiStatusLabel = Instance.new("TextLabel", frame)
+    guiStatusLabel.Size = UDim2.new(1,0,0.4,0); guiStatusLabel.Position = UDim2.new(0,0,0.6,0); guiStatusLabel.TextColor3 = Color3.new(1,1,1); guiStatusLabel.Text = "Starting..."; guiStatusLabel.TextScaled = true
 end
-
 createGui()
 
-local function updateGui(status)
-    if KILL then return end
-    if guiPkgLabel then
-        guiPkgLabel.Text = "[PKG] " .. countPackages()
-    end
-    if guiStatusLabel and status then guiStatusLabel.Text = tostring(status) end
-end
-
+-- ===================== PERSISTENT TELEPORT =====================
 task.spawn(function()
-    while not STOP and not KILL do task.wait(0.1); updateGui() end
-end)
-
--- =============================================
--- UI FIXES
--- =============================================
-pcall(function()
-    local offline = menusGui:FindFirstChild("Offline")
-    if offline then offline:Destroy() end
-end)
-pcall(function()
-    local sendPackages = menusGui:FindFirstChild("SendPackages")
-    if sendPackages then sendPackages.Visible = true end
-end)
-
-game:GetService("RunService"):Set3dRenderingEnabled(false)
-
-for _, v in ipairs(menusGui:GetDescendants()) do
-    pcall(function()
-        if v:IsA("TextButton") or v:IsA("ImageButton") or v:IsA("TextBox") then
-            v.Selectable = true; v.Active = true
-        end
-    end)
-end
-
--- =============================================
--- BACKGROUND TASKS
--- =============================================
-task.spawn(function()
-    while not STOP and not KILL do
-        task.wait(1)
-        local data = getData()
-        if data then
-            if data.Fails then processAllFailedUsers(data.Fails) end
-            if data.Check == false then unblockAllUsers() end
-        end
+    while not KILL do
+        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then hrp.CFrame = TELEPORT_CFRAME end
+        task.wait(5)
     end
 end)
 
-task.spawn(function()
-    local url = SERVER_IP .. "/priority-heartbeat?user=" .. myUsername
-    while not STOP and not KILL do
-        safeRequest({ Url = url, Method = "GET" })
-        task.wait(10)
-    end
-end)
-
--- =============================================
--- MAIN DUPE & CLEANUP FLOW
--- =============================================
-print("[MAIN] Starting...")
-updateGui("[ZZZ] Waiting for target")
+-- ===================== MAIN LOOP =====================
+RunService:Set3dRenderingEnabled(false)
 
 while not STOP and not KILL do
-    task.wait(2)
-
+    task.wait(1)
+    
     local target = getCurrentTarget()
-
-    if not target or target <= 0 then
-        updateGui("[ZZZ] No target")
+    
+    -- FIX: If target is 0, just wait, don't kill the script logic
+    if target <= 0 then
+        guiStatusLabel.Text = "⌛ Waiting for Target..."
         setServerState("Stop")
+        task.wait(2)
         continue
     end
 
-    updateGui("[NEW] Target: " .. target .. " pkgs")
-    print("[MAIN] Target received: " .. target .. " packages")
-
-    -- Start Generation
+    print("[MAIN] Target found: " .. target)
+    guiStatusLabel.Text = "🚀 Syncing " .. target .. " pkgs"
     setServerState("Start")
-    task.wait(0.5)
 
-    -- Monitor scrolling frame for packages
-    while not STOP and not KILL do
-        local currentCount = countPackages()
-        updateGui("[SYNC] " .. currentCount .. "/" .. target .. " pkgs")
-        if currentCount >= target then
-            break
-        end
+    -- Wait for packages
+    while countPackages() < target and not KILL do
+        guiPkgLabel.Text = "[PKG] " .. countPackages() .. "/" .. target
         task.wait(0.5)
     end
 
-    if STOP or KILL then 
-        setServerState("Stop")
-        continue 
+    setServerState("Stop")
+    guiStatusLabel.Text = "🛑 STOPPED - Cleaning..."
+    task.wait(1)
+
+    -- Precision Cleanup (Reject Overflow)
+    local frames = {}
+    for _, child in ipairs(scrollingFrame:GetChildren()) do
+        if child:IsA("Frame") then table.insert(frames, child) end
     end
 
-    -- STOP GENERATION IMMEDIATELY
-    setServerState("Stop")
-    updateGui("[STOP] Target reached, stopping gen...")
-    task.wait(0.5)
-
-    -- PRECISION CLEANUP
-    local currentCount = countPackages()
-    if currentCount > target then
-        updateGui("[CLEANUP] Rejecting " .. (currentCount - target) .. " extra pkgs...")
-        print("[CLEANUP] Overflow detected. Rejecting " .. (currentCount - target) .. " packages back to mail.")
-        
-        local frames = {}
-        for _, child in ipairs(scrollingFrame:GetChildren()) do
-            if child:IsA("Frame") then table.insert(frames, child) end
-        end
-        
-        -- Keep exactly `target` packages, reject the rest
+    if #frames > target then
         for i = target + 1, #frames do
-            if KILL or STOP then break end
-            rejectFrameByName(frames[i].Name, 15)
+            rejectFrameByName(frames[i].Name)
             task.wait(0.1)
         end
     end
 
-    if STOP or KILL then continue end
-
-    -- FINALIZATION
-    local finalCount = countPackages()
-    local totalGems = finalCount * PACKAGE_GEMS
-    local totalM = totalGems / 1000000
+    -- Signal completion to Android
+    guiStatusLabel.Text = "✅ DONE - Signaling..."
+    safeRequest({ Url = SERVER_IP .. "/Complete", Method = "GET" })
     
-    updateGui("[DONE] " .. totalM .. "M gems total!")
-    print("[MAIN] Cleanup complete. " .. finalCount .. " packages kept in mail.")
-    
-    -- Signal completion to Android App
-    signalComplete()
-    
-    task.wait(1)
-    
-    -- Kick the player cleanly
-    pcall(function()
-        player:Kick("Done : " .. totalM .. " M gems total!")
-    end)
-    
+    task.wait(2)
+    player:Kick("Successfully completed delivery!")
     break
 end
-
-print("[SCRIPT] Delivery script ended")
