@@ -1,112 +1,247 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — FULL WEBSOCKET (WS)
+-- 📡 ANDROID AUTOMATOR — FULL WSS SCRIPT
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local HttpService = game:GetService("HttpService")
-local player      = game:GetService("Players").LocalPlayer
+local Players     = game:GetService("Players")
+local player      = Players.LocalPlayer
 local WS_URL      = "ws://localhost:8080"
 local ws          = nil
 
--- Config
+-- CONFIG & STATE
 local TARGET      = 0
+local FAILS       = {}
+local PACKAGE_GEMS = 10000000
 local TELEPORT    = CFrame.new(-460, 244, -67)
+
+-- Roblox remotes
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
+local rejectIdValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
+    "RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S"
+).Value
+local rejectStaticStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
+
+-- UI references
+local playerGui = player:WaitForChild("PlayerGui")
+local menusGui = playerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus")
+local scrollingFrame = menusGui:WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
+
+-- Kill switch
+local KILL = false
+local function killEverything()
+    if KILL then return end
+    KILL = true
+    if ws then pcall(function() ws:Close() end) end
+end
+
+local GuiService = game:GetService("GuiService")
+GuiService.ErrorMessageChanged:Connect(function()
+    if GuiService.ErrorMessage and GuiService.ErrorMessage ~= "" then killEverything() end
+end)
+Players.PlayerRemoving:Connect(function(p) if p == player then killEverything() end end)
+
+-- Teleport guard
+task.spawn(function()
+    while not KILL do
+        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then hrp.CFrame = TELEPORT break end
+        task.wait(1)
+    end
+end)
+
+-- GUI Overlay
+local function createGui()
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "DeliveryCounter"; sg.ResetOnSpawn = false; sg.Parent = playerGui
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 280, 0, 90); frame.Position = UDim2.new(0.5, -140, 0, 10)
+    frame.BackgroundColor3 = Color3.fromRGB(10,10,15); frame.BackgroundTransparency = 0.2
+    frame.BorderSizePixel = 0; frame.Parent = sg
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+    local pkgLabel = Instance.new("TextLabel")
+    pkgLabel.Size = UDim2.new(1,0,0.55,0); pkgLabel.BackgroundTransparency = 1
+    pkgLabel.TextColor3 = Color3.fromRGB(0,255,136); pkgLabel.TextScaled = true
+    pkgLabel.Font = Enum.Font.GothamBold; pkgLabel.Text = "[PKG] 0"; pkgLabel.Parent = frame
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Size = UDim2.new(1,0,0.45,0); statusLabel.Position = UDim2.new(0,0,0.55,0)
+    statusLabel.BackgroundTransparency = 1; statusLabel.TextColor3 = Color3.fromRGB(139,148,158)
+    statusLabel.TextScaled = true; statusLabel.Font = Enum.Font.Gotham
+    statusLabel.Text = "Waiting..."; statusLabel.Parent = frame
+    return pkgLabel, statusLabel
+end
+
+local guiPkgLabel, guiStatusLabel = createGui()
+
+local function updateGui(status)
+    local count = 0
+    for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
+    guiPkgLabel.Text = "[PKG] " .. count
+    if status then guiStatusLabel.Text = tostring(status) end
+end
+
+task.spawn(function()
+    while not KILL do task.wait(0.1); updateGui() end
+end)
+
+-- UI fixes
+game:GetService("RunService"):Set3dRenderingEnabled(false)
+for _, v in ipairs(menusGui:GetDescendants()) do
+    pcall(function()
+        if v:IsA("TextButton") or v:IsA("ImageButton") or v:IsA("TextBox") then
+            v.Selectable = true; v.Active = true
+        end
+    end)
+end
+
+-- Reject logic
+local rejectedUsers = {}
+local function rejectFrameByName(frameName, maxWait)
+    maxWait = maxWait or 15
+    local elapsed = 0
+    while elapsed < maxWait do
+        local stillThere = false
+        for _, frame in ipairs(scrollingFrame:GetChildren()) do
+            if frame.Name == frameName then stillThere = true break end
+        end
+        if not stillThere then return true end
+        remote:FireServer(unpack({ { { rejectIdValue, rejectStaticStr, frameName } } }))
+        task.wait(0.1); elapsed += 0.1
+    end
+    return false
+end
+
+local function processFails(failsList)
+    if not failsList then return end
+    for _, user in ipairs(failsList) do
+        if not rejectedUsers[user] then
+            for _, frame in ipairs(scrollingFrame:GetChildren()) do
+                if frame:IsA("Frame") then
+                    local fromBox = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
+                    if fromBox and fromBox:IsA("TextBox") and fromBox.Text:gsub("@","") == user then
+                        if rejectFrameByName(frame.Name, 15) then rejectedUsers[user] = true end
+                        break
+                    end
+                end
+            end
+        end
+    end
+end
 
 -- ===================== WS HANDLERS =====================
 local function connectWS()
-    print("[WS] Connecting to Android Automator...")
-    local ok, socket = pcall(function()
-        return WebSocket.connect(WS_URL)
-    end)
+    print("[WSS] Connecting...")
+    local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
 
     if not ok or not socket then
-        warn("[WS] Connection failed! Retrying in 5s...")
+        warn("[WSS] Connection failed! Retrying...")
         task.wait(5)
         return connectWS()
     end
 
     ws = socket
-    print("[WS] Connected!")
+    print("[WSS] Connected!")
 
-    -- Claim Priority Immediately
-    ws:Send(HttpService:JSONEncode({
-        type = "priority_set",
-        user = player.Name
-    }))
+    -- Claim Priority
+    ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
 
-    -- Handle Incoming (Target Updates, etc)
+    -- Handle Incoming Updates
     ws.OnMessage:Connect(function(msg)
-        local data = HttpService:JSONDecode(msg)
-        if data.type == "target_update" then
-            TARGET = tonumber(data.value) or 0
-            print("[WS] New Target Received: " .. TARGET)
-        elseif data.type == "priority_info" then
-            print("[WS] Priority Owner: " .. tostring(data.owner))
+        local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
+        if not ok or not data then return end
+
+        if data.type == "data_update" then
+            TARGET = tonumber(data.target) or 0
+            FAILS  = data.fails or {}
+            print("[WSS] Sync: Target=" .. TARGET .. " | Fails=" .. #FAILS)
         end
     end)
 
-    -- Handle Disconnect
+    -- Auto-Reconnect
     ws.OnClose:Connect(function()
-        warn("[WS] Socket Closed! Reconnecting...")
+        warn("[WSS] Disconnected! Reconnecting...")
         task.wait(2)
         connectWS()
     end)
 end
 
--- ===================== HEARTBEAT THREAD =====================
+-- ===================== HEARTBEAT =====================
 task.spawn(function()
     while true do
         if ws then
             pcall(function()
-                ws:Send(HttpService:JSONEncode({
-                    type = "heartbeat",
-                    user = player.Name
-                }))
+                ws:Send(HttpService:JSONEncode({ type = "heartbeat", user = player.Name }))
+                ws:Send(HttpService:JSONEncode({ type = "get_data" }))
             end)
         end
         task.wait(10)
     end
 end)
 
--- ===================== MAIN LOGIC =====================
+-- ===================== MAIN LOOP =====================
 connectWS()
 
-while true do
+while not KILL do
     task.wait(2)
-    
-    -- Teleport Guard
+
+    -- Position Lock
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if hrp then hrp.CFrame = TELEPORT end
 
     if TARGET <= 0 then
-        print("[WS] Waiting for target assignment...")
+        print("[WSS] Waiting for order...")
+        updateGui("Waiting for target")
         task.wait(3)
         continue
     end
 
-    -- Signal Generation Start
+    updateGui("Target: " .. TARGET .. " pkgs")
+
+    -- Process Fails
+    processFails(FAILS)
+
+    -- Tell Android we are active
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
 
-    -- Loop until target met (logic remains same, just uses WS for state)
-    local scrollingFrame = player.PlayerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus"):WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
-    
-    while true do
+    -- Sync Phase
+    while not KILL do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
-        
+        updateGui(count .. "/" .. TARGET .. " pkgs")
         if count >= TARGET then break end
-        task.wait(1)
+        task.wait(0.5)
     end
 
-    -- Finish
+    if KILL then break end
+
+    -- Target Met
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
-    print("[WS] Target met, cleaning up...")
-    
-    -- (Insert your reject/cleanup logic here)
+    print("[WSS] Target Met. Finalizing...")
+
+    -- Precision Cleanup
+    local count = 0
+    for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
+    if count > TARGET then
+        local frames = {}
+        for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then table.insert(frames, v) end end
+        for i = TARGET + 1, #frames do
+            if KILL then break end
+            rejectFrameByName(frames[i].Name, 15)
+            task.wait(0.1)
+        end
+    end
 
     -- Final Signal
     ws:Send(HttpService:JSONEncode({ type = "complete" }))
     task.wait(2)
-    player:Kick("Protocol Complete via WebSocket")
+
+    local finalCount = 0
+    for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then finalCount = finalCount + 1 end end
+    local totalM = (finalCount * PACKAGE_GEMS) / 1000000
+    updateGui("Done: " .. totalM .. "M")
+    player:Kick("Protocol Complete via WSS | " .. totalM .. "M gems")
     break
 end
+
+print("[WSS] Script ended.")
