@@ -1,28 +1,26 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — RESILIENT LUA SCRIPT
+-- 📡 ANDROID AUTOMATOR — OPTIMIZED LUA
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local Players         = game:GetService("Players")
 local HttpService     = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local GuiService      = game:GetService("GuiService")
 local RunService      = game:GetService("RunService")
 
 local player          = Players.LocalPlayer
 local SERVER_IP       = "http://localhost:8080"
 local requestFunc     = syn and syn.request or http and http.request or request
 
--- =============================================
--- CONFIGURATION
--- =============================================
+-- CONFIG
+local PACKAGE_GEMS       = 10000000 -- 10M Units
 local TELEPORT_CFRAME    = CFrame.new(-460, 244, -67)
-local PACKAGE_GEMS       = 10000000 
 
--- =============================================
--- HTTP HELPERS
--- =============================================
+-- ===================== HTTP HELPERS =====================
 local function safeRequest(options)
     local ok, res = pcall(function() return requestFunc(options) end)
+    if not ok then print("[ERROR] Request failed: " .. tostring(res)) end
     return ok and res or nil
 end
 
@@ -37,9 +35,7 @@ end
 
 local function getCurrentTarget()
     local res = safeRequest({ Url = SERVER_IP .. "/current-target", Method = "GET" })
-    if res and res.Body then
-        return tonumber(res.Body) or 0
-    end
+    if res and res.Body then return tonumber(res.Body) or 0 end
     return 0
 end
 
@@ -50,16 +46,17 @@ local function setServerState(s)
         Headers = { ["Content-Type"] = "application/json" },
         Body    = HttpService:JSONEncode({ State = tostring(s) })
     })
+    print("[DEBUG] Server State -> " .. s)
 end
 
--- =============================================
--- 🛡️ PRIORITY & HEARTBEAT (Runs in Background)
--- =============================================
+-- ===================== HEARTBEAT & PRIORITY =====================
+-- This runs in background to tell Android app to skip Tap Test
 task.spawn(function()
     while true do
         local p = getPriority()
+        -- FIX: Use 'sendto' to match Android App
         if not p or p.sendto ~= player.Name then
-            -- Claim priority (Android now reads this body correctly)
+            print("[AUTH] Requesting priority for: " .. player.Name)
             safeRequest({
                 Url = SERVER_IP .. "/priority/set",
                 Method = "POST",
@@ -67,20 +64,18 @@ task.spawn(function()
                 Body = HttpService:JSONEncode({ username = player.Name })
             })
         end
-        -- Heartbeat: This tells the Android App to skip the "Tap Test"
+        -- Android app skips tap test if this is received within 30s
         safeRequest({ Url = SERVER_IP .. "/priority-heartbeat?user=" .. player.Name, Method = "GET" })
         task.wait(10)
     end
 end)
 
--- =============================================
--- 🛠️ GAME ELEMENTS
--- =============================================
-local playerGui  = player:WaitForChild("PlayerGui")
+-- ===================== ELEMENTS =====================
+local playerGui      = player:WaitForChild("PlayerGui")
 local scrollingFrame = playerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus"):WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
-local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
-local rejectIdValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
-local rejectStaticStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
+local remote         = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
+local rejectIdValue  = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
+local rejectStatic   = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
 local function countPackages()
     local count = 0
@@ -90,48 +85,35 @@ local function countPackages()
     return count
 end
 
--- ===================== OVERLAY =====================
-local guiPkgLabel, guiStatusLabel
-local function createGui()
-    local sg = Instance.new("ScreenGui", playerGui)
-    sg.Name = "DeliveryCounter"; sg.ResetOnSpawn = false
-    local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 250, 0, 70); frame.Position = UDim2.new(0.5, -125, 0, 20)
-    frame.BackgroundColor3 = Color3.new(0,0,0); frame.BackgroundTransparency = 0.3
-    guiPkgLabel = Instance.new("TextLabel", frame)
-    guiPkgLabel.Size = UDim2.new(1,0,0.6,0); guiPkgLabel.TextColor3 = Color3.new(0,1,0); guiPkgLabel.Text = "[PKG] 0"; guiPkgLabel.TextScaled = true
-    guiStatusLabel = Instance.new("TextLabel", frame)
-    guiStatusLabel.Size = UDim2.new(1,0,0.4,0); guiStatusLabel.Position = UDim2.new(0,0,0.6,0); guiStatusLabel.TextColor3 = Color3.new(1,1,1); guiStatusLabel.Text = "Syncing..."; guiStatusLabel.TextScaled = true
-end
-createGui()
-
--- ===================== MAIN LOOP =====================
+-- ===================== MAIN CYCLE =====================
 RunService:Set3dRenderingEnabled(false)
+print("[LOAD] Script active. Waiting for teleport...")
 
 while true do
     task.wait(2)
+    -- Teleport fallback
+    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+    if hrp then hrp.CFrame = TELEPORT_CFRAME end
+
     local target = getCurrentTarget()
-    
     if target <= 0 then
-        guiStatusLabel.Text = "⌛ Waiting for Target..."
+        print("[DEBUG] Waiting for order target...")
         setServerState("Stop")
         continue
     end
 
-    guiStatusLabel.Text = "🚀 Target: " .. target
+    print("[DEBUG] Target Found: " .. target)
     setServerState("Start")
 
-    -- Sync Phase
+    -- Wait Phase
     while countPackages() < target do
-        guiPkgLabel.Text = "[PKG] " .. countPackages() .. "/" .. target
-        task.wait(0.5)
+        task.wait(1)
     end
 
     setServerState("Stop")
-    guiStatusLabel.Text = "🛑 STOPPED - Cleaning..."
-    task.wait(1)
+    print("[DEBUG] Target Reached. Cleaning...")
 
-    -- Precision Cleanup
+    -- Cleanup
     local frames = {}
     for _, child in ipairs(scrollingFrame:GetChildren()) do
         if child:IsA("Frame") then table.insert(frames, child) end
@@ -139,16 +121,16 @@ while true do
 
     if #frames > target then
         for i = target + 1, #frames do
-            remote:FireServer(unpack({ { { rejectIdValue, rejectStaticStr, frames[i].Name } } }))
+            remote:FireServer(unpack({ { { rejectIdValue, rejectStatic, frames[i].Name } } }))
             task.wait(0.1)
         end
     end
 
-    -- Signal completion
-    guiStatusLabel.Text = "✅ DONE - Signaling..."
+    -- Signal completion (Android app will logout)
+    print("[DONE] Signaling completion...")
     safeRequest({ Url = SERVER_IP .. "/Complete", Method = "GET" })
     
     task.wait(2)
-    player:Kick("Delivery Complete!")
+    player:Kick("Protocol Complete")
     break
 end
