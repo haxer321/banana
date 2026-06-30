@@ -2,7 +2,7 @@
 -- 📡 ANDROID AUTOMATOR — WSS SCRIPT (NO VIM)
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
-
+task.spawn(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))() end)
 local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
 local player      = Players.LocalPlayer
