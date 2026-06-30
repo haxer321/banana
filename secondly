@@ -1,5 +1,5 @@
 -- =============================================
--- PRIORITY AUTH — must pass before anything loads
+-- PRIORITY AUTH — soft takeover, never blocks loading
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -22,7 +22,7 @@ end
 
 local priority = getPriority()
 if not priority or priority.sendto ~= player.Name then
-    -- Take over priority
+    -- Attempt to take over priority
     pcall(function()
         requestFunc({
             Url = SERVER_IP .. "/priority/set",
@@ -34,11 +34,13 @@ if not priority or priority.sendto ~= player.Name then
     task.wait(1)
     priority = getPriority()
     if not priority or priority.sendto ~= player.Name then
-        print("[AUTH] Not priority — not loading")
-        return
+        print("[AUTH] Could not set priority — continuing anyway (heartbeat will retry)")
+    else
+        print("[AUTH] Priority confirmed — loaded script")
     end
+else
+    print("[AUTH] Priority already confirmed — loaded script")
 end
-print("[AUTH] Priority confirmed — loading script")
 
 -- =============================================
 -- CONFIGURATION VARIABLES
