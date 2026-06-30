@@ -1,15 +1,11 @@
 -- =============================================
 -- 📡 ANDROID AUTOMATOR — RESILIENT LUA SCRIPT
 -- =============================================
-
--- Ensure game is loaded before anything else
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 local Players         = game:GetService("Players")
 local HttpService     = game:GetService("HttpService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local GuiService      = game:GetService("GuiService")
 local RunService      = game:GetService("RunService")
 
 local player          = Players.LocalPlayer
@@ -19,9 +15,8 @@ local requestFunc     = syn and syn.request or http and http.request or request
 -- =============================================
 -- CONFIGURATION
 -- =============================================
-local PACKAGE_GEMS       = 10000000 
 local TELEPORT_CFRAME    = CFrame.new(-460, 244, -67)
-local KILL_ON_ERROR      = true
+local PACKAGE_GEMS       = 10000000 
 
 -- =============================================
 -- HTTP HELPERS
@@ -34,7 +29,7 @@ end
 local function getPriority()
     local res = safeRequest({ Url = SERVER_IP .. "/priority", Method = "GET" })
     if res and res.Body then
-        local ok, data = pcall(pcall, HttpService.JSONDecode, HttpService, res.Body)
+        local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
         if ok then return data end
     end
     return nil
@@ -58,42 +53,34 @@ local function setServerState(s)
 end
 
 -- =============================================
--- 🛡️ PRIORITY SYSTEM
+-- 🛡️ PRIORITY & HEARTBEAT (Runs in Background)
 -- =============================================
 task.spawn(function()
     while true do
-        local priority = getPriority()
-        if not priority or priority.sendto ~= player.Name then
-            -- Take over priority
+        local p = getPriority()
+        if not p or p.sendto ~= player.Name then
+            -- Claim priority (Android now reads this body correctly)
             safeRequest({
                 Url = SERVER_IP .. "/priority/set",
                 Method = "POST",
                 Headers = { ["Content-Type"] = "application/json" },
                 Body = HttpService:JSONEncode({ username = player.Name })
             })
-            print("[AUTH] Priority requested")
         end
-        -- Heartbeat (Android App uses this to stay alive)
+        -- Heartbeat: This tells the Android App to skip the "Tap Test"
         safeRequest({ Url = SERVER_IP .. "/priority-heartbeat?user=" .. player.Name, Method = "GET" })
         task.wait(10)
     end
 end)
 
 -- =============================================
--- 🛠️ UI & REJECT SYSTEM
+-- 🛠️ GAME ELEMENTS
 -- =============================================
-local STOP = false
-local KILL = false
-
 local playerGui  = player:WaitForChild("PlayerGui")
 local scrollingFrame = playerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus"):WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
 local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
 local rejectIdValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
 local rejectStaticStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
-
-local function rejectFrameByName(frameName)
-    remote:FireServer(unpack({ { { rejectIdValue, rejectStaticStr, frameName } } }))
-end
 
 local function countPackages()
     local count = 0
@@ -103,9 +90,7 @@ local function countPackages()
     return count
 end
 
--- =============================================
--- 📺 OVERLAY GUI
--- =============================================
+-- ===================== OVERLAY =====================
 local guiPkgLabel, guiStatusLabel
 local function createGui()
     local sg = Instance.new("ScreenGui", playerGui)
@@ -116,41 +101,28 @@ local function createGui()
     guiPkgLabel = Instance.new("TextLabel", frame)
     guiPkgLabel.Size = UDim2.new(1,0,0.6,0); guiPkgLabel.TextColor3 = Color3.new(0,1,0); guiPkgLabel.Text = "[PKG] 0"; guiPkgLabel.TextScaled = true
     guiStatusLabel = Instance.new("TextLabel", frame)
-    guiStatusLabel.Size = UDim2.new(1,0,0.4,0); guiStatusLabel.Position = UDim2.new(0,0,0.6,0); guiStatusLabel.TextColor3 = Color3.new(1,1,1); guiStatusLabel.Text = "Starting..."; guiStatusLabel.TextScaled = true
+    guiStatusLabel.Size = UDim2.new(1,0,0.4,0); guiStatusLabel.Position = UDim2.new(0,0,0.6,0); guiStatusLabel.TextColor3 = Color3.new(1,1,1); guiStatusLabel.Text = "Syncing..."; guiStatusLabel.TextScaled = true
 end
 createGui()
-
--- ===================== PERSISTENT TELEPORT =====================
-task.spawn(function()
-    while not KILL do
-        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then hrp.CFrame = TELEPORT_CFRAME end
-        task.wait(5)
-    end
-end)
 
 -- ===================== MAIN LOOP =====================
 RunService:Set3dRenderingEnabled(false)
 
-while not STOP and not KILL do
-    task.wait(1)
-    
+while true do
+    task.wait(2)
     local target = getCurrentTarget()
     
-    -- FIX: If target is 0, just wait, don't kill the script logic
     if target <= 0 then
         guiStatusLabel.Text = "⌛ Waiting for Target..."
         setServerState("Stop")
-        task.wait(2)
         continue
     end
 
-    print("[MAIN] Target found: " .. target)
-    guiStatusLabel.Text = "🚀 Syncing " .. target .. " pkgs"
+    guiStatusLabel.Text = "🚀 Target: " .. target
     setServerState("Start")
 
-    -- Wait for packages
-    while countPackages() < target and not KILL do
+    -- Sync Phase
+    while countPackages() < target do
         guiPkgLabel.Text = "[PKG] " .. countPackages() .. "/" .. target
         task.wait(0.5)
     end
@@ -159,7 +131,7 @@ while not STOP and not KILL do
     guiStatusLabel.Text = "🛑 STOPPED - Cleaning..."
     task.wait(1)
 
-    -- Precision Cleanup (Reject Overflow)
+    -- Precision Cleanup
     local frames = {}
     for _, child in ipairs(scrollingFrame:GetChildren()) do
         if child:IsA("Frame") then table.insert(frames, child) end
@@ -167,16 +139,16 @@ while not STOP and not KILL do
 
     if #frames > target then
         for i = target + 1, #frames do
-            rejectFrameByName(frames[i].Name)
+            remote:FireServer(unpack({ { { rejectIdValue, rejectStaticStr, frames[i].Name } } }))
             task.wait(0.1)
         end
     end
 
-    -- Signal completion to Android
+    -- Signal completion
     guiStatusLabel.Text = "✅ DONE - Signaling..."
     safeRequest({ Url = SERVER_IP .. "/Complete", Method = "GET" })
     
     task.wait(2)
-    player:Kick("Successfully completed delivery!")
+    player:Kick("Delivery Complete!")
     break
 end
