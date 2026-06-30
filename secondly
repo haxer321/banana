@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — FULL WSS SCRIPT (UPDATED)
+-- 📡 ANDROID AUTOMATOR — WSS SCRIPT (NO VIM)
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -23,7 +23,7 @@ local rejectIdValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):Wai
 ).Value
 local rejectStaticStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
--- ========== 🔥 NEW: Fire the specific remote FIRST ==========
+-- ========== NEW: Fire the specific remote FIRST ==========
 local function firePreTeleportRemote()
     local args = {
         {
@@ -37,31 +37,6 @@ local function firePreTeleportRemote()
     remote:FireServer(unpack(args))
 end
 firePreTeleportRemote()
-
--- ========== 🖱️ NEW: VIM click on left side after 5s wait ==========
-local VirtualInputManager = game:GetService("VirtualInputManager")
-local function clickLeftSide()
-    -- Wait 5 seconds before clicking (you can adjust this delay)
-    task.wait(5)
-    -- Click at a position on the left side of the screen (X = 50, Y = 300)
-    -- Change these coordinates if a different left-side element needs to be clicked
-    local clickPosition = Vector2.new(50, 300)
-    VirtualInputManager:SendMouseButtonEvent(
-        clickPosition.X, clickPosition.Y,  -- screen coordinates
-        0,   -- button: 0 = left click
-        true -- down
-    )
-    task.wait(0.05)
-    VirtualInputManager:SendMouseButtonEvent(
-        clickPosition.X, clickPosition.Y,
-        0,
-        false -- up
-    )
-    print("[VIM] Clicked left side at " .. tostring(clickPosition))
-end
-
--- Run the click in a separate thread (non‑blocking) so the rest can proceed
-task.spawn(clickLeftSide)
 
 -- ========== REST OF ORIGINAL SCRIPT (unchanged) ==========
 
