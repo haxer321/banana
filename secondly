@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — ROBUST WS (PARSING FIX)
+-- 📡 ANDROID AUTOMATOR — ROBUST WS (PARSING FIX + PRIORITY ONCE)
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -17,7 +17,7 @@ local ws          = nil
 local TARGET      = 0
 local FAILS       = {}
 local DUPE_FLAG   = false
-local CHECK_FLAG  = true   -- wait until it becomes false
+local CHECK_FLAG  = true
 local PACKAGE_GEMS = 10000000
 local TELEPORT    = CFrame.new(-460, 244, -67)
 
@@ -164,18 +164,19 @@ local function connectWS()
     end
     ws = socket
 
-    -- Claim priority
+    -- 🔥 CLAIM PRIORITY ONLY ONCE WHEN CONNECTED
     ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
+    print("[WSS] Priority set for " .. player.Name)
 
     ws.OnMessage:Connect(function(msg)
         local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
         if ok2 and data.type == "data_update" then
-            -- 🔥 EXACT key mapping from your server
             TARGET    = tonumber(data.target) or 0
-            DUPE_FLAG = (data.Dupe == true)       -- capital D
-            CHECK_FLAG= (data.Check == true)       -- capital C
-            FAILS     = data.Fails or data.fails or {}  -- both capital and lowercase
+            DUPE_FLAG = (data.Dupe == true)
+            CHECK_FLAG= (data.Check == true)
+            FAILS     = data.Fails or data.fails or {}
             print("[WSS] Dupe=" .. tostring(DUPE_FLAG) .. " Check=" .. tostring(CHECK_FLAG) .. " Fails=" .. #FAILS)
+            -- NO re-claim of priority here
         end
     end)
 
@@ -217,7 +218,6 @@ while not KILL do
     -- Start generation
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
 
-    -- Wait until we have enough packages
     while not KILL do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
@@ -230,7 +230,6 @@ while not KILL do
 
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
-    -- ✅ FIXED WAIT: wait until server says Check is false (done checking)
     local timeout = os.clock() + 180
     print("[WSS] Target met. Waiting for Server Confirmation (Check=false)...")
     while os.clock() < timeout do
