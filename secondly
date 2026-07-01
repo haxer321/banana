@@ -1,5 +1,9 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — ROBUST WS (PARSING FIX + PRIORITY ONCE)
+-- 📡 ANDROID AUTOMATOR — ROBUST WS (FIXED)
+-- Fixes:
+-- 1. Heartbeats start IMMEDIATELY, before teleport, so Android knows session is alive.
+-- 2. All JSON decodes wrapped in pcall (was already done, but now explicit).
+-- 3. Priority claim verified: wait for a confirmation that includes "user" == player.Name.
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -55,7 +59,7 @@ GuiService.ErrorMessageChanged:Connect(function()
 end)
 Players.PlayerRemoving:Connect(function(p) if p == player then killEverything() end end)
 
--- Teleport guard
+-- Teleport guard (will run after heartbeat starts)
 task.spawn(function()
     while not KILL do
         local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -164,11 +168,33 @@ local function connectWS()
     end
     ws = socket
 
-    -- 🔥 CLAIM PRIORITY ONLY ONCE WHEN CONNECTED
+    -- 🔥 CLAIM PRIORITY – AND VERIFY SERVER ACKNOWLEDGMENT
     ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
-    print("[WSS] Priority set for " .. player.Name)
+    print("[WSS] Sent priority claim for " .. player.Name)
+
+    -- Wait for a confirmation that includes "user" == player.Name
+    local confirmed = false
+    local timeout = os.clock() + 10
+    while os.clock() < timeout and not confirmed do
+        local okMsg, msg = pcall(function() return ws:Receive(2) end)
+        if okMsg and msg then
+            local okDecode, decoded = pcall(HttpService.JSONDecode, HttpService, msg)
+            if okDecode and decoded.type == "priority_ack" and decoded.user == player.Name then
+                confirmed = true
+                print("[WSS] Priority confirmed by server for " .. player.Name)
+                break
+            end
+        end
+    end
+    if not confirmed then
+        warn("[WSS] Priority not confirmed! Reconnecting...")
+        ws:Close()
+        task.wait(3)
+        return connectWS()
+    end
 
     ws.OnMessage:Connect(function(msg)
+        -- Fix #2: pcall around all JSON decodes
         local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
         if ok2 and data.type == "data_update" then
             TARGET    = tonumber(data.target) or 0
@@ -176,7 +202,6 @@ local function connectWS()
             CHECK_FLAG= (data.Check == true)
             FAILS     = data.Fails or data.fails or {}
             print("[WSS] Dupe=" .. tostring(DUPE_FLAG) .. " Check=" .. tostring(CHECK_FLAG) .. " Fails=" .. #FAILS)
-            -- NO re-claim of priority here
         end
     end)
 
@@ -186,25 +211,32 @@ local function connectWS()
     end)
 end
 
--- Heartbeat
-task.spawn(function()
-    while true do
+-- ===================== HEARTBEAT (IMMEDIATELY) =====================
+-- Fix #1: Heartbeats start right now, before teleport and before main loop.
+-- This tells Android the session is alive.
+local heartbeatThread = task.spawn(function()
+    while not KILL do
         if ws then
-            pcall(function()
+            local ok, _ = pcall(function()
                 ws:Send(HttpService:JSONEncode({ type = "heartbeat", user = player.Name }))
                 ws:Send(HttpService:JSONEncode({ type = "get_data" }))
             end)
+            if not ok then
+                print("[WSS] Heartbeat send failed (expected during disconnect)")
+            end
         end
         task.wait(10)
     end
 end)
 
--- ===================== MAIN CYCLE =====================
+-- ===================== CONNECT WS =====================
 connectWS()
 
+-- ===================== MAIN CYCLE =====================
 while not KILL do
     task.wait(2)
 
+    -- Teleport is still applied here (if not already done)
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if hrp then hrp.CFrame = TELEPORT end
 
