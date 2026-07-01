@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — ROBUST WS (FIXED & COMPLETE)
+-- 📡 ANDROID AUTOMATOR — ROBUST WS (PARSING FIX)
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -17,7 +17,7 @@ local ws          = nil
 local TARGET      = 0
 local FAILS       = {}
 local DUPE_FLAG   = false
-local CHECK_FLAG  = true
+local CHECK_FLAG  = true   -- wait until it becomes false
 local PACKAGE_GEMS = 10000000
 local TELEPORT    = CFrame.new(-460, 244, -67)
 
@@ -32,7 +32,7 @@ local rejectId = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForC
 ).Value
 local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
--- ========== Fire the one-time remote at start ==========
+-- Fire one-time remote at start
 local function firePreTeleportRemote()
     local identifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
         "RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba"
@@ -41,7 +41,7 @@ local function firePreTeleportRemote()
 end
 firePreTeleportRemote()
 
--- ========== Kill switch ==========
+-- Kill switch
 local KILL = false
 local function killEverything()
     if KILL then return end
@@ -55,7 +55,7 @@ GuiService.ErrorMessageChanged:Connect(function()
 end)
 Players.PlayerRemoving:Connect(function(p) if p == player then killEverything() end end)
 
--- ========== Teleport guard ==========
+-- Teleport guard
 task.spawn(function()
     while not KILL do
         local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -64,7 +64,7 @@ task.spawn(function()
     end
 end)
 
--- ========== GUI Overlay ==========
+-- GUI Overlay
 local function createGui()
     local sg = Instance.new("ScreenGui")
     sg.Name = "DeliveryCounter"; sg.ResetOnSpawn = false; sg.Parent = playerGui
@@ -105,7 +105,7 @@ task.spawn(function()
     while not KILL do task.wait(0.1); updateGui() end
 end)
 
--- UI fixes
+-- Disable 3D rendering + UI fixes
 game:GetService("RunService"):Set3dRenderingEnabled(false)
 for _, v in ipairs(menusGui:GetDescendants()) do
     pcall(function()
@@ -115,7 +115,7 @@ for _, v in ipairs(menusGui:GetDescendants()) do
     end)
 end
 
--- ========== Reject spam helper ==========
+-- Reject helper
 local function rejectFrameByName(frameName, maxWait)
     maxWait = maxWait or 15
     local elapsed = 0
@@ -130,6 +130,29 @@ local function rejectFrameByName(frameName, maxWait)
     end
     return false
 end
+
+-- Background fails processor (continuous)
+local processedFails = {}
+task.spawn(function()
+    while not KILL do
+        task.wait(1)
+        if not FAILS then continue end
+        for _, badUser in ipairs(FAILS) do
+            if not processedFails[badUser] then
+                for _, frame in ipairs(scrollingFrame:GetChildren()) do
+                    local fromBox = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
+                    if fromBox and fromBox.Text:gsub("@","") == badUser then
+                        if rejectFrameByName(frame.Name, 15) then
+                            processedFails[badUser] = true
+                            print("[FAILS] Rejected: " .. badUser)
+                        end
+                        break
+                    end
+                end
+            end
+        end
+    end
+end)
 
 -- ===================== WS HANDLERS =====================
 local function connectWS()
@@ -147,10 +170,12 @@ local function connectWS()
     ws.OnMessage:Connect(function(msg)
         local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
         if ok2 and data.type == "data_update" then
-            TARGET = tonumber(data.target) or 0
-            FAILS  = data.Fails or data.fails or {}
-            DUPE_FLAG = data.Dupe == true
-            CHECK_FLAG = data.Check == true
+            -- 🔥 EXACT key mapping from your server
+            TARGET    = tonumber(data.target) or 0
+            DUPE_FLAG = (data.Dupe == true)       -- capital D
+            CHECK_FLAG= (data.Check == true)       -- capital C
+            FAILS     = data.Fails or data.fails or {}  -- both capital and lowercase
+            print("[WSS] Dupe=" .. tostring(DUPE_FLAG) .. " Check=" .. tostring(CHECK_FLAG) .. " Fails=" .. #FAILS)
         end
     end)
 
@@ -160,7 +185,7 @@ local function connectWS()
     end)
 end
 
--- ===================== HEARTBEAT =====================
+-- Heartbeat
 task.spawn(function()
     while true do
         if ws then
@@ -179,32 +204,20 @@ connectWS()
 while not KILL do
     task.wait(2)
 
-    -- Position lock
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if hrp then hrp.CFrame = TELEPORT end
 
     if TARGET <= 0 then
-        print("[WSS] Idle - No Target")
         updateGui("Waiting for target")
         continue
     end
 
     updateGui("Target: " .. TARGET .. " pkgs")
 
-    -- Process Fails with retry spam
-    for _, badUser in ipairs(FAILS) do
-        for _, frame in ipairs(scrollingFrame:GetChildren()) do
-            local fromBox = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
-            if fromBox and fromBox.Text:gsub("@","") == badUser then
-                rejectFrameByName(frame.Name, 15)
-            end
-        end
-    end
-
-    -- Start Generation
+    -- Start generation
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
 
-    -- Sync Phase
+    -- Wait until we have enough packages
     while not KILL do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
@@ -217,20 +230,19 @@ while not KILL do
 
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
-    -- WAIT FOR DUPE/CHECK WITH 3‑MINUTE TIMEOUT
+    -- ✅ FIXED WAIT: wait until server says Check is false (done checking)
     local timeout = os.clock() + 180
-    print("[WSS] Target met. Waiting for Server Confirmation...")
-
+    print("[WSS] Target met. Waiting for Server Confirmation (Check=false)...")
     while os.clock() < timeout do
-        if DUPE_FLAG == true and CHECK_FLAG == false then break end
+        if CHECK_FLAG == false then break end
         task.wait(1)
         if ws then ws:Send(HttpService:JSONEncode({ type = "get_data" })) end
-        updateGui()  -- refresh GUI with latest flags
+        updateGui()
     end
 
     if KILL then break end
 
-    -- Precision Cleanup (optional)
+    -- Cleanup extra packages
     local count = 0
     for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
     if count > TARGET then
@@ -243,7 +255,6 @@ while not KILL do
         end
     end
 
-    -- Finalize
     print("[WSS] Sync Complete. Signaling Success...")
     ws:Send(HttpService:JSONEncode({ type = "complete" }))
     task.wait(2)
