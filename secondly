@@ -1,8 +1,12 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — WSS SCRIPT (DUPE/CHECK)
+-- 📡 ANDROID AUTOMATOR — ROBUST WS (FIXED & COMPLETE)
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
-task.spawn(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))() end)
+
+task.spawn(function()
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))()
+end)
+
 local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
 local player      = Players.LocalPlayer
@@ -12,42 +16,32 @@ local ws          = nil
 -- CONFIG & STATE
 local TARGET      = 0
 local FAILS       = {}
-local DUPE_FLAG   = false   -- added
-local CHECK_FLAG  = true    -- added (default true so we don't accidentally trigger)
+local DUPE_FLAG   = false
+local CHECK_FLAG  = true
 local PACKAGE_GEMS = 10000000
 local TELEPORT    = CFrame.new(-460, 244, -67)
 
--- Roblox remotes
+-- Roblox elements
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
-local rejectIdValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
-    "RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S"
-).Value
-local rejectStaticStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
-
--- ========== Fire the specific remote FIRST ==========
-local function firePreTeleportRemote()
-    local args = {
-        {
-            {
-                ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
-                    "RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba"
-                ).Value
-            }
-        }
-    }
-    remote:FireServer(unpack(args))
-end
-firePreTeleportRemote()
-
--- ========== REST OF ORIGINAL SCRIPT (unchanged except dupe/check) ==========
-
--- UI references
 local playerGui = player:WaitForChild("PlayerGui")
 local menusGui = playerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus")
 local scrollingFrame = menusGui:WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
+local rejectId = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
+    "RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S"
+).Value
+local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
--- Kill switch
+-- ========== Fire the one-time remote at start ==========
+local function firePreTeleportRemote()
+    local identifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
+        "RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba"
+    ).Value
+    remote:FireServer({ { identifier } })
+end
+firePreTeleportRemote()
+
+-- ========== Kill switch ==========
 local KILL = false
 local function killEverything()
     if KILL then return end
@@ -61,7 +55,7 @@ GuiService.ErrorMessageChanged:Connect(function()
 end)
 Players.PlayerRemoving:Connect(function(p) if p == player then killEverything() end end)
 
--- Teleport guard
+-- ========== Teleport guard ==========
 task.spawn(function()
     while not KILL do
         local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -70,12 +64,12 @@ task.spawn(function()
     end
 end)
 
--- GUI Overlay
+-- ========== GUI Overlay ==========
 local function createGui()
     local sg = Instance.new("ScreenGui")
     sg.Name = "DeliveryCounter"; sg.ResetOnSpawn = false; sg.Parent = playerGui
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 320, 0, 100)  -- a bit wider for extra info
+    frame.Size = UDim2.new(0, 320, 0, 100)
     frame.Position = UDim2.new(0.5, -160, 0, 10)
     frame.BackgroundColor3 = Color3.fromRGB(10,10,15); frame.BackgroundTransparency = 0.2
     frame.BorderSizePixel = 0; frame.Parent = sg
@@ -121,8 +115,7 @@ for _, v in ipairs(menusGui:GetDescendants()) do
     end)
 end
 
--- Reject logic
-local rejectedUsers = {}
+-- ========== Reject spam helper ==========
 local function rejectFrameByName(frameName, maxWait)
     maxWait = maxWait or 15
     local elapsed = 0
@@ -132,64 +125,36 @@ local function rejectFrameByName(frameName, maxWait)
             if frame.Name == frameName then stillThere = true break end
         end
         if not stillThere then return true end
-        remote:FireServer(unpack({ { { rejectIdValue, rejectStaticStr, frameName } } }))
+        remote:FireServer({ {rejectId, rejectStr, frameName} })
         task.wait(0.1); elapsed += 0.1
     end
     return false
 end
 
-local function processFails(failsList)
-    if not failsList then return end
-    for _, user in ipairs(failsList) do
-        if not rejectedUsers[user] then
-            for _, frame in ipairs(scrollingFrame:GetChildren()) do
-                if frame:IsA("Frame") then
-                    local fromBox = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
-                    if fromBox and fromBox:IsA("TextBox") and fromBox.Text:gsub("@","") == user then
-                        if rejectFrameByName(frame.Name, 15) then rejectedUsers[user] = true end
-                        break
-                    end
-                end
-            end
-        end
-    end
-end
-
 -- ===================== WS HANDLERS =====================
 local function connectWS()
-    print("[WSS] Connecting...")
+    print("[WSS] Syncing with Android...")
     local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
-
     if not ok or not socket then
-        warn("[WSS] Connection failed! Retrying...")
         task.wait(5)
         return connectWS()
     end
-
     ws = socket
-    print("[WSS] Connected!")
 
-    -- Claim Priority
+    -- Claim priority
     ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
 
-    -- Handle Incoming Updates
     ws.OnMessage:Connect(function(msg)
-        local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
-        if not ok or not data then return end
-
-        if data.type == "data_update" then
+        local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
+        if ok2 and data.type == "data_update" then
             TARGET = tonumber(data.target) or 0
-            FAILS  = data.fails or {}
-            -- NEW: read Dupe and Check (case-sensitive as in your JSON)
-            DUPE_FLAG  = data.Dupe == true
-            CHECK_FLAG = data.Check == true   -- note: we store the actual boolean
-            print("[WSS] Sync: Target=" .. TARGET .. " | Fails=" .. #FAILS .. " | Dupe=" .. tostring(DUPE_FLAG) .. " | Check=" .. tostring(CHECK_FLAG))
+            FAILS  = data.Fails or data.fails or {}
+            DUPE_FLAG = data.Dupe == true
+            CHECK_FLAG = data.Check == true
         end
     end)
 
-    -- Auto-Reconnect
     ws.OnClose:Connect(function()
-        warn("[WSS] Disconnected! Reconnecting...")
         task.wait(2)
         connectWS()
     end)
@@ -208,29 +173,35 @@ task.spawn(function()
     end
 end)
 
--- ===================== MAIN LOOP =====================
+-- ===================== MAIN CYCLE =====================
 connectWS()
 
 while not KILL do
     task.wait(2)
 
-    -- Position Lock
+    -- Position lock
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if hrp then hrp.CFrame = TELEPORT end
 
     if TARGET <= 0 then
-        print("[WSS] Waiting for order...")
+        print("[WSS] Idle - No Target")
         updateGui("Waiting for target")
-        task.wait(3)
         continue
     end
 
     updateGui("Target: " .. TARGET .. " pkgs")
 
-    -- Process Fails
-    processFails(FAILS)
+    -- Process Fails with retry spam
+    for _, badUser in ipairs(FAILS) do
+        for _, frame in ipairs(scrollingFrame:GetChildren()) do
+            local fromBox = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
+            if fromBox and fromBox.Text:gsub("@","") == badUser then
+                rejectFrameByName(frame.Name, 15)
+            end
+        end
+    end
 
-    -- Tell Android we are active
+    -- Start Generation
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
 
     -- Sync Phase
@@ -244,26 +215,22 @@ while not KILL do
 
     if KILL then break end
 
-    -- ========== NEW: Wait for Dupe=true AND Check=false ==========
-    updateGui("Target met, waiting for Dupe/Check...")
-    repeat
+    ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
+
+    -- WAIT FOR DUPE/CHECK WITH 3‑MINUTE TIMEOUT
+    local timeout = os.clock() + 180
+    print("[WSS] Target met. Waiting for Server Confirmation...")
+
+    while os.clock() < timeout do
+        if DUPE_FLAG == true and CHECK_FLAG == false then break end
         task.wait(1)
-        -- Request fresh data to update flags
-        if ws then
-            pcall(function()
-                ws:Send(HttpService:JSONEncode({ type = "get_data" }))
-            end)
-        end
+        if ws then ws:Send(HttpService:JSONEncode({ type = "get_data" })) end
         updateGui()  -- refresh GUI with latest flags
-    until (DUPE_FLAG == true and CHECK_FLAG == false) or KILL
+    end
 
     if KILL then break end
 
-    -- Target Met + conditions satisfied
-    ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
-    print("[WSS] Dupe true / Check false. Finalizing...")
-
-    -- Precision Cleanup (optional, same as before)
+    -- Precision Cleanup (optional)
     local count = 0
     for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
     if count > TARGET then
@@ -276,7 +243,8 @@ while not KILL do
         end
     end
 
-    -- Final Signal
+    -- Finalize
+    print("[WSS] Sync Complete. Signaling Success...")
     ws:Send(HttpService:JSONEncode({ type = "complete" }))
     task.wait(2)
 
@@ -284,7 +252,7 @@ while not KILL do
     for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then finalCount = finalCount + 1 end end
     local totalM = (finalCount * PACKAGE_GEMS) / 1000000
     updateGui("Done: " .. totalM .. "M")
-    player:Kick("Protocol Complete via WSS | " .. totalM .. "M gems")
+    player:Kick("Success: " .. totalM .. "M gems via WSS")
     break
 end
 
