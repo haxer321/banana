@@ -1,9 +1,9 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — ROBUST WS (FIXED)
+-- 📡 ANDROID AUTOMATOR — ROBUST WS (FINAL FIX)
 -- Fixes:
 -- 1. Heartbeats start IMMEDIATELY, before teleport, so Android knows session is alive.
--- 2. All JSON decodes wrapped in pcall (was already done, but now explicit).
--- 3. Priority claim verified: wait for a confirmation that includes "user" == player.Name.
+-- 2. All JSON decodes wrapped in pcall.
+-- 3. Priority claim is non‑blocking: we treat the first data_update with matching user as implicit ack.
 -- =============================================
 if not game:IsLoaded() then game.Loaded:Wait() end
 
@@ -168,52 +168,53 @@ local function connectWS()
     end
     ws = socket
 
-    -- 🔥 CLAIM PRIORITY – AND VERIFY SERVER ACKNOWLEDGMENT
+    -- Send priority claim (non‑blocking)
     ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
     print("[WSS] Sent priority claim for " .. player.Name)
 
-    -- Wait for a confirmation that includes "user" == player.Name
-    local confirmed = false
-    local timeout = os.clock() + 10
-    while os.clock() < timeout and not confirmed do
-        local okMsg, msg = pcall(function() return ws:Receive(2) end)
-        if okMsg and msg then
-            local okDecode, decoded = pcall(HttpService.JSONDecode, HttpService, msg)
-            if okDecode and decoded.type == "priority_ack" and decoded.user == player.Name then
-                confirmed = true
-                print("[WSS] Priority confirmed by server for " .. player.Name)
-                break
+    -- Set up OnMessage BEFORE waiting – this will handle both implicit ack and data updates
+    local priorityConfirmed = false
+    ws.OnMessage:Connect(function(msg)
+        local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
+        if not ok2 then return end
+
+        -- Implicit acknowledgment: any message with user matching our player
+        if data.user == player.Name then
+            if not priorityConfirmed then
+                priorityConfirmed = true
+                print("[WSS] Priority implicitly confirmed by server (user matched in message)")
             end
         end
-    end
-    if not confirmed then
-        warn("[WSS] Priority not confirmed! Reconnecting...")
-        ws:Close()
-        task.wait(3)
-        return connectWS()
-    end
 
-    ws.OnMessage:Connect(function(msg)
-        -- Fix #2: pcall around all JSON decodes
-        local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
-        if ok2 and data.type == "data_update" then
+        -- Process data updates
+        if data.type == "data_update" then
             TARGET    = tonumber(data.target) or 0
             DUPE_FLAG = (data.Dupe == true)
             CHECK_FLAG= (data.Check == true)
             FAILS     = data.Fails or data.fails or {}
-            print("[WSS] Dupe=" .. tostring(DUPE_FLAG) .. " Check=" .. tostring(CHECK_FLAG) .. " Fails=" .. #FAILS)
+            print("[WSS] Target=" .. TARGET .. " Dupe=" .. tostring(DUPE_FLAG) .. " Check=" .. tostring(CHECK_FLAG) .. " Fails=" .. #FAILS)
         end
     end)
 
+    -- Wait a short time for any initial message (e.g. first data_update)
+    local timeout = os.clock() + 5
+    while os.clock() < timeout and not priorityConfirmed do
+        task.wait(0.1)
+        -- We rely on OnMessage callback, no need to poll manually
+    end
+
+    if not priorityConfirmed then
+        print("[WSS] No confirmation received within 5s, proceeding anyway...")
+    end
+
     ws.OnClose:Connect(function()
+        print("[WSS] Connection closed. Reconnecting in 2s...")
         task.wait(2)
         connectWS()
     end)
 end
 
 -- ===================== HEARTBEAT (IMMEDIATELY) =====================
--- Fix #1: Heartbeats start right now, before teleport and before main loop.
--- This tells Android the session is alive.
 local heartbeatThread = task.spawn(function()
     while not KILL do
         if ws then
@@ -241,7 +242,7 @@ while not KILL do
     if hrp then hrp.CFrame = TELEPORT end
 
     if TARGET <= 0 then
-        updateGui("Waiting for target")
+        updateGui("Waiting...")
         continue
     end
 
