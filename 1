@@ -20,7 +20,14 @@ if loadingGui then
     print("[INFO] Loading GUI disappeared → verifying 5s stable")
     task.wait(5)
 end
-
+task.spawn(function()
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
+    local identifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
+        "RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba"
+    ).Value
+    remote:FireServer({ { identifier } })
+end)
 print("[INFO] Game fully loaded")
 
 -- WebSocket Configuration
