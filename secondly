@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — WITH BLOCKLIST (DUPE RESET)
+-- 📡 ANDROID AUTOMATOR — WITH BLOCKLIST & TEXTBOX DETECTION
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -120,7 +120,7 @@ for _, v in ipairs(menusGui:GetDescendants()) do
 end
 
 -- =============================================
--- REJECT HELPERS (with blocklist)
+-- REJECT HELPERS (with blocklist & TextBox "From" detection)
 -- =============================================
 local function rejectFrameByName(frameName, maxWait)
     maxWait = maxWait or 15
@@ -144,17 +144,16 @@ local function rejectFrameByName(frameName, maxWait)
     return false
 end
 
--- Find a frame that contains the given username anywhere in its descendants (case-insensitive)
+-- Find a frame that contains a TextBox named "From" whose Text matches the username (case-insensitive, ignoring @)
 local function findFrameByUser(user)
     local userClean = user:gsub("@", ""):lower()
     for _, frame in ipairs(scrollingFrame:GetChildren()) do
         if frame:IsA("Frame") then
-            for _, desc in ipairs(frame:GetDescendants()) do
-                if desc:IsA("TextLabel") and desc.Text then
-                    local text = desc.Text:gsub("@", ""):lower()
-                    if text:find(userClean, 1, true) then
-                        return frame
-                    end
+            local fromBox = frame:FindFirstChild("From")
+            if fromBox and fromBox:IsA("TextBox") then
+                local text = fromBox.Text:gsub("@", ""):lower()
+                if text == userClean then
+                    return frame
                 end
             end
         end
@@ -189,17 +188,16 @@ local function rejectAllFails()
             end
         else
             print("[FAIL] ❌ Could not find frame for user: " .. badUser)
-            -- Debug dump
-            print("[DEBUG] Current frames and their Texts:")
+            -- Debug dump of all frames and their "From" TextBox text
+            print("[DEBUG] Current frames and their 'From' TextBox content:")
             for _, f in ipairs(scrollingFrame:GetChildren()) do
                 if f:IsA("Frame") then
-                    local texts = {}
-                    for _, d in ipairs(f:GetDescendants()) do
-                        if d:IsA("TextLabel") then
-                            table.insert(texts, d.Text)
-                        end
+                    local fromBox = f:FindFirstChild("From")
+                    if fromBox and fromBox:IsA("TextBox") then
+                        print("[DEBUG]   Frame " .. f.Name .. " → From: " .. fromBox.Text)
+                    else
+                        print("[DEBUG]   Frame " .. f.Name .. " → (no 'From' TextBox)")
                     end
-                    print("[DEBUG]   Frame " .. f.Name .. " → Texts: " .. table.concat(texts, " | "))
                 end
             end
         end
