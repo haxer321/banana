@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — ROBUST WS (FAIL FIX + DEBUG)
+-- 📡 ANDROID AUTOMATOR — ULTRA VERBOSE FAIL REJECTION
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -16,7 +16,7 @@ local ws          = nil
 
 -- CONFIG & STATE
 local TARGET      = 0
-local FAILS       = {}
+local FAILS       = {}   -- will be set from WSS
 local DUPE_FLAG   = false
 local CHECK_FLAG  = true
 local PACKAGE_GEMS = 10000000
@@ -117,51 +117,52 @@ for _, v in ipairs(menusGui:GetDescendants()) do
 end
 
 -- =============================================
--- REJECT HELPERS (with debug prints)
+-- REJECT HELPERS (super verbose)
 -- =============================================
 local function rejectFrameByName(frameName, maxWait)
     maxWait = maxWait or 15
     local elapsed = 0
     print("[REJECT] Attempting to reject frame: " .. frameName)
     while elapsed < maxWait do
-        -- Check if frame still exists
         local found = false
         for _, frame in ipairs(scrollingFrame:GetChildren()) do
             if frame.Name == frameName then found = true; break end
         end
         if not found then
-            print("[REJECT] Frame " .. frameName .. " is gone (rejected successfully)")
+            print("[REJECT] ✅ Frame " .. frameName .. " is gone (rejected successfully)")
             return true
         end
-        -- Send reject remote
         print("[REJECT] Firing reject remote for " .. frameName)
         remote:FireServer({ {rejectId, rejectStr, frameName} })
         task.wait(0.2)
         elapsed = elapsed + 0.2
     end
-    print("[REJECT] Timeout: Frame " .. frameName .. " still exists after " .. maxWait .. "s")
+    print("[REJECT] ❌ Timeout: Frame " .. frameName .. " still exists after " .. maxWait .. "s")
     return false
 end
 
--- Finds a frame whose "From" text matches the given user (case‑insensitive, ignoring @)
+-- Find a frame that contains the given username anywhere in its descendants (case-insensitive)
 local function findFrameByUser(user)
     local userClean = user:gsub("@", ""):lower()
     for _, frame in ipairs(scrollingFrame:GetChildren()) do
-        local fromBox = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
-        if fromBox and fromBox:IsA("TextLabel") then
-            local text = fromBox.Text:gsub("@", ""):lower()
-            if text == userClean then
-                return frame
+        if frame:IsA("Frame") then
+            -- Check all TextLabels in the frame for the username
+            for _, desc in ipairs(frame:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Text then
+                    local text = desc.Text:gsub("@", ""):lower()
+                    if text:find(userClean, 1, true) then
+                        return frame
+                    end
+                end
             end
         end
     end
     return nil
 end
 
--- Reject all packages belonging to users in FAILS (with full logging)
+-- Main rejection function
 local function rejectAllFails()
     if not FAILS or #FAILS == 0 then
-        print("[FAIL] No fails to reject.")
         return
     end
     print("[FAIL] ***** STARTING REJECTION OF " .. #FAILS .. " FAILS *****")
@@ -170,25 +171,26 @@ local function rejectAllFails()
         print("[FAIL] Looking for frame for user: " .. badUser)
         local frame = findFrameByUser(badUser)
         if frame then
-            print("[FAIL] Found frame with name: " .. frame.Name .. " (From text: " .. (frame.Package and frame.Package.From and frame.Package.From.Text or "?") .. ")")
+            print("[FAIL] Found frame with name: " .. frame.Name)
             local success = rejectFrameByName(frame.Name, 15)
             if success then
                 print("[FAIL] ✅ Rejected " .. badUser .. " successfully!")
             else
-                print("[FAIL] ❌ Failed to reject " .. badUser .. " (timeout or frame still present)")
+                print("[FAIL] ❌ Failed to reject " .. badUser .. " (timeout)")
             end
         else
             print("[FAIL] ❌ Could not find frame for user: " .. badUser)
-            -- Debug: list all current frames and their From text
-            print("[DEBUG] Current frames in scrollingFrame:")
+            -- Debug dump
+            print("[DEBUG] Current frames and their Texts:")
             for _, f in ipairs(scrollingFrame:GetChildren()) do
                 if f:IsA("Frame") then
-                    local fromBox = f:FindFirstChild("Package") and f.Package:FindFirstChild("From")
-                    if fromBox and fromBox:IsA("TextLabel") then
-                        print("[DEBUG]   Frame " .. f.Name .. " → From: " .. fromBox.Text)
-                    else
-                        print("[DEBUG]   Frame " .. f.Name .. " → (no From label)")
+                    local texts = {}
+                    for _, d in ipairs(f:GetDescendants()) do
+                        if d:IsA("TextLabel") then
+                            table.insert(texts, d.Text)
+                        end
                     end
+                    print("[DEBUG]   Frame " .. f.Name .. " → Texts: " .. table.concat(texts, " | "))
                 end
             end
         end
@@ -228,9 +230,10 @@ local function connectWS()
             DUPE_FLAG = (data.Dupe == true)
             CHECK_FLAG= (data.Check == true)
             FAILS     = data.Fails or data.fails or {}
-            print("[WSS] Target=" .. TARGET .. " Dupe=" .. tostring(DUPE_FLAG) .. " Check=" .. tostring(CHECK_FLAG) .. " Fails=" .. #FAILS)
+            print("[WSS] 📨 Data Update: Target=" .. TARGET .. " Dupe=" .. tostring(DUPE_FLAG) .. " Check=" .. tostring(CHECK_FLAG))
+            print("[WSS] 📋 Received FAILS table: " .. table.concat(FAILS, ", "))
 
-            -- ***** IMMEDIATE FAIL REJECTION (spawn to avoid blocking) *****
+            -- Immediate rejection (spawn so it doesn't block)
             task.spawn(function()
                 rejectAllFails()
             end)
@@ -253,20 +256,28 @@ local function connectWS()
 end
 
 -- =============================================
--- HEARTBEAT (IMMEDIATE START)
+-- HEARTBEAT + BACKGROUND SCANNER
 -- =============================================
 task.spawn(function()
     while not KILL do
         if ws then
-            local ok, _ = pcall(function()
+            pcall(function()
                 ws:Send(HttpService:JSONEncode({ type = "heartbeat", user = player.Name }))
                 ws:Send(HttpService:JSONEncode({ type = "get_data" }))
             end)
-            if not ok then
-                print("[WSS] Heartbeat send failed (expected during disconnect)")
-            end
         end
         task.wait(10)
+    end
+end)
+
+-- BACKGROUND SCANNER: every 3 seconds, check for any frame belonging to a FAIL user
+task.spawn(function()
+    while not KILL do
+        task.wait(3)
+        if FAILS and #FAILS > 0 then
+            print("[SCANNER] Running periodic fail check...")
+            rejectAllFails()
+        end
     end
 end)
 
@@ -313,9 +324,7 @@ while not KILL do
 
     if KILL then break end
 
-    -- =============================================
-    -- REJECT EXCESS PACKAGES (with debug)
-    -- =============================================
+    -- Reject excess packages
     local frames = {}
     for _, v in ipairs(scrollingFrame:GetChildren()) do
         if v:IsA("Frame") then table.insert(frames, v) end
