@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — ULTRA VERBOSE FAIL REJECTION
+-- 📡 ANDROID AUTOMATOR — WITH BLOCKLIST (DUPE RESET)
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -16,11 +16,14 @@ local ws          = nil
 
 -- CONFIG & STATE
 local TARGET      = 0
-local FAILS       = {}   -- will be set from WSS
+local FAILS       = {}
 local DUPE_FLAG   = false
 local CHECK_FLAG  = true
 local PACKAGE_GEMS = 10000000
 local TELEPORT    = CFrame.new(-460, 244, -67)
+
+-- 🔒 BLOCKLIST – users we've already rejected (ignored until dupe == true)
+local blockedUsers = {}
 
 -- Roblox elements
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -117,7 +120,7 @@ for _, v in ipairs(menusGui:GetDescendants()) do
 end
 
 -- =============================================
--- REJECT HELPERS (super verbose)
+-- REJECT HELPERS (with blocklist)
 -- =============================================
 local function rejectFrameByName(frameName, maxWait)
     maxWait = maxWait or 15
@@ -146,7 +149,6 @@ local function findFrameByUser(user)
     local userClean = user:gsub("@", ""):lower()
     for _, frame in ipairs(scrollingFrame:GetChildren()) do
         if frame:IsA("Frame") then
-            -- Check all TextLabels in the frame for the username
             for _, desc in ipairs(frame:GetDescendants()) do
                 if desc:IsA("TextLabel") and desc.Text then
                     local text = desc.Text:gsub("@", ""):lower()
@@ -160,7 +162,7 @@ local function findFrameByUser(user)
     return nil
 end
 
--- Main rejection function
+-- Main rejection function with blocklist
 local function rejectAllFails()
     if not FAILS or #FAILS == 0 then
         return
@@ -168,15 +170,22 @@ local function rejectAllFails()
     print("[FAIL] ***** STARTING REJECTION OF " .. #FAILS .. " FAILS *****")
     print("[FAIL] Fail list: " .. table.concat(FAILS, ", "))
     for _, badUser in ipairs(FAILS) do
+        -- Check blocklist
+        if blockedUsers[badUser] then
+            print("[FAIL] ⏭️ Ignoring " .. badUser .. " (already blocked, waiting for dupe == true)")
+            continue
+        end
         print("[FAIL] Looking for frame for user: " .. badUser)
         local frame = findFrameByUser(badUser)
         if frame then
             print("[FAIL] Found frame with name: " .. frame.Name)
             local success = rejectFrameByName(frame.Name, 15)
             if success then
-                print("[FAIL] ✅ Rejected " .. badUser .. " successfully!")
+                -- Add to blocklist
+                blockedUsers[badUser] = true
+                print("[FAIL] ✅ Rejected " .. badUser .. " successfully! Added to blocklist.")
             else
-                print("[FAIL] ❌ Failed to reject " .. badUser .. " (timeout)")
+                print("[FAIL] ❌ Failed to reject " .. badUser .. " (timeout) – not blocking.")
             end
         else
             print("[FAIL] ❌ Could not find frame for user: " .. badUser)
@@ -233,6 +242,18 @@ local function connectWS()
             print("[WSS] 📨 Data Update: Target=" .. TARGET .. " Dupe=" .. tostring(DUPE_FLAG) .. " Check=" .. tostring(CHECK_FLAG))
             print("[WSS] 📋 Received FAILS table: " .. table.concat(FAILS, ", "))
 
+            -- If dupe == true, release all blocks
+            if DUPE_FLAG then
+                if next(blockedUsers) then
+                    local count = 0
+                    for _ in pairs(blockedUsers) do count = count + 1 end
+                    print("[DUPE] 🧹 Dupe is true – clearing blocklist (" .. count .. " users)")
+                    blockedUsers = {}
+                else
+                    print("[DUPE] Dupe is true, but blocklist is already empty.")
+                end
+            end
+
             -- Immediate rejection (spawn so it doesn't block)
             task.spawn(function()
                 rejectAllFails()
@@ -270,7 +291,7 @@ task.spawn(function()
     end
 end)
 
--- BACKGROUND SCANNER: every 3 seconds, check for any frame belonging to a FAIL user
+-- BACKGROUND SCANNER: every 3 seconds, check for any frame belonging to a FAIL user (respects blocklist)
 task.spawn(function()
     while not KILL do
         task.wait(3)
