@@ -1,10 +1,13 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — ROBUST WS (FINAL FIX)
+-- 📡 ANDROID AUTOMATOR — ROBUST WS (FAIL FIX)
 -- Fixes:
--- 1. Heartbeats start IMMEDIATELY, before teleport, so Android knows session is alive.
+-- 1. Heartbeats start immediately.
 -- 2. All JSON decodes wrapped in pcall.
--- 3. Priority claim is non‑blocking: we treat the first data_update with matching user as implicit ack.
+-- 3. Priority claim is non‑blocking; first data_update with matching user acts as implicit ack.
+-- 4. Fail‑rejection happens instantly on every data_update.
+-- 5. Excess packages are reliably rejected at the end.
 -- =============================================
+
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 task.spawn(function()
@@ -59,7 +62,7 @@ GuiService.ErrorMessageChanged:Connect(function()
 end)
 Players.PlayerRemoving:Connect(function(p) if p == player then killEverything() end end)
 
--- Teleport guard (will run after heartbeat starts)
+-- Teleport guard (runs after heartbeat starts)
 task.spawn(function()
     while not KILL do
         local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
@@ -119,46 +122,62 @@ for _, v in ipairs(menusGui:GetDescendants()) do
     end)
 end
 
--- Reject helper
+-- =============================================
+-- REJECT HELPERS (improved)
+-- =============================================
 local function rejectFrameByName(frameName, maxWait)
     maxWait = maxWait or 15
     local elapsed = 0
     while elapsed < maxWait do
-        local stillThere = false
+        -- Check if frame still exists
+        local found = false
         for _, frame in ipairs(scrollingFrame:GetChildren()) do
-            if frame.Name == frameName then stillThere = true break end
+            if frame.Name == frameName then found = true; break end
         end
-        if not stillThere then return true end
+        if not found then return true end
+        -- Send reject remote
         remote:FireServer({ {rejectId, rejectStr, frameName} })
-        task.wait(0.1); elapsed += 0.1
+        task.wait(0.2)
+        elapsed = elapsed + 0.2
     end
     return false
 end
 
--- Background fails processor (continuous)
-local processedFails = {}
-task.spawn(function()
-    while not KILL do
-        task.wait(1)
-        if not FAILS then continue end
-        for _, badUser in ipairs(FAILS) do
-            if not processedFails[badUser] then
-                for _, frame in ipairs(scrollingFrame:GetChildren()) do
-                    local fromBox = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
-                    if fromBox and fromBox.Text:gsub("@","") == badUser then
-                        if rejectFrameByName(frame.Name, 15) then
-                            processedFails[badUser] = true
-                            print("[FAILS] Rejected: " .. badUser)
-                        end
-                        break
-                    end
-                end
+-- Finds a frame whose "From" text matches the given user (case‑insensitive, ignoring @)
+local function findFrameByUser(user)
+    local userClean = user:gsub("@", ""):lower()
+    for _, frame in ipairs(scrollingFrame:GetChildren()) do
+        local fromBox = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
+        if fromBox and fromBox:IsA("TextLabel") then
+            local text = fromBox.Text:gsub("@", ""):lower()
+            if text == userClean then
+                return frame
             end
         end
     end
-end)
+    return nil
+end
 
--- ===================== WS HANDLERS =====================
+-- Reject all packages belonging to users in FAILS
+local function rejectAllFails()
+    if not FAILS or #FAILS == 0 then return end
+    for _, badUser in ipairs(FAILS) do
+        local frame = findFrameByUser(badUser)
+        if frame then
+            print("[FAIL] Rejecting package from " .. badUser)
+            local success = rejectFrameByName(frame.Name, 15)
+            if success then
+                print("[FAIL] Rejected " .. badUser)
+            else
+                print("[FAIL] Failed to reject " .. badUser .. " (timeout)")
+            end
+        end
+    end
+end
+
+-- =============================================
+-- WS CONNECTION + MESSAGE HANDLER
+-- =============================================
 local function connectWS()
     print("[WSS] Syncing with Android...")
     local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
@@ -172,17 +191,16 @@ local function connectWS()
     ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
     print("[WSS] Sent priority claim for " .. player.Name)
 
-    -- Set up OnMessage BEFORE waiting – this will handle both implicit ack and data updates
     local priorityConfirmed = false
     ws.OnMessage:Connect(function(msg)
         local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
         if not ok2 then return end
 
-        -- Implicit acknowledgment: any message with user matching our player
+        -- Implicit ack: any message with our user
         if data.user == player.Name then
             if not priorityConfirmed then
                 priorityConfirmed = true
-                print("[WSS] Priority implicitly confirmed by server (user matched in message)")
+                print("[WSS] Priority implicitly confirmed")
             end
         end
 
@@ -193,18 +211,21 @@ local function connectWS()
             CHECK_FLAG= (data.Check == true)
             FAILS     = data.Fails or data.fails or {}
             print("[WSS] Target=" .. TARGET .. " Dupe=" .. tostring(DUPE_FLAG) .. " Check=" .. tostring(CHECK_FLAG) .. " Fails=" .. #FAILS)
+
+            -- ***** IMMEDIATE FAIL REJECTION *****
+            task.spawn(function()
+                rejectAllFails()
+            end)
         end
     end)
 
-    -- Wait a short time for any initial message (e.g. first data_update)
+    -- Wait a short time for initial confirmation
     local timeout = os.clock() + 5
     while os.clock() < timeout and not priorityConfirmed do
         task.wait(0.1)
-        -- We rely on OnMessage callback, no need to poll manually
     end
-
     if not priorityConfirmed then
-        print("[WSS] No confirmation received within 5s, proceeding anyway...")
+        print("[WSS] No confirmation within 5s, proceeding anyway...")
     end
 
     ws.OnClose:Connect(function()
@@ -214,8 +235,10 @@ local function connectWS()
     end)
 end
 
--- ===================== HEARTBEAT (IMMEDIATELY) =====================
-local heartbeatThread = task.spawn(function()
+-- =============================================
+-- HEARTBEAT (IMMEDIATE START)
+-- =============================================
+task.spawn(function()
     while not KILL do
         if ws then
             local ok, _ = pcall(function()
@@ -230,14 +253,15 @@ local heartbeatThread = task.spawn(function()
     end
 end)
 
--- ===================== CONNECT WS =====================
 connectWS()
 
--- ===================== MAIN CYCLE =====================
+-- =============================================
+-- MAIN CYCLE
+-- =============================================
 while not KILL do
     task.wait(2)
 
-    -- Teleport is still applied here (if not already done)
+    -- Keep teleporting
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if hrp then hrp.CFrame = TELEPORT end
 
@@ -248,9 +272,10 @@ while not KILL do
 
     updateGui("Target: " .. TARGET .. " pkgs")
 
-    -- Start generation
+    -- Signal start
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
 
+    -- Collect until target met
     while not KILL do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
@@ -263,6 +288,7 @@ while not KILL do
 
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
+    -- Wait for server to set Check=false
     local timeout = os.clock() + 180
     print("[WSS] Target met. Waiting for Server Confirmation (Check=false)...")
     while os.clock() < timeout do
@@ -274,19 +300,23 @@ while not KILL do
 
     if KILL then break end
 
-    -- Cleanup extra packages
-    local count = 0
-    for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
-    if count > TARGET then
-        local frames = {}
-        for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then table.insert(frames, v) end end
+    -- =============================================
+    -- REJECT EXCESS PACKAGES (if any)
+    -- =============================================
+    local frames = {}
+    for _, v in ipairs(scrollingFrame:GetChildren()) do
+        if v:IsA("Frame") then table.insert(frames, v) end
+    end
+    if #frames > TARGET then
+        print("[WSS] Rejecting " .. (#frames - TARGET) .. " excess packages")
         for i = TARGET + 1, #frames do
             if KILL then break end
             rejectFrameByName(frames[i].Name, 15)
-            task.wait(0.1)
+            task.wait(0.2)
         end
     end
 
+    -- Final sync
     print("[WSS] Sync Complete. Signaling Success...")
     ws:Send(HttpService:JSONEncode({ type = "complete" }))
     task.wait(2)
