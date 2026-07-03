@@ -1,5 +1,7 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — EXACT PATH: Frame → "Package" → "From"
+-- 📡 ANDROID AUTOMATOR — FINAL: 10M CAP + SAME DETECTION FOR FALLBACK
+-- Detection: scans all TextLabel descendants (includes From + message)
+-- Fallback: if a fail user isn't matched, reject any frame that contains NONE of the fail usernames
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -19,7 +21,8 @@ local TARGET      = 0
 local FAILS       = {}
 local DUPE_FLAG   = false
 local CHECK_FLAG  = true
-local PACKAGE_GEMS = 2500000
+local PACKAGE_GEMS = 2500000      -- 2.5M per package
+local MAX_PACKAGES = 4            -- 4 × 2.5M = 10M (hard cap)
 local TELEPORT    = CFrame.new(-460, 244, -67)
 
 -- 🔒 BLOCKLIST – users we've already rejected (ignored until dupe == true)
@@ -120,7 +123,7 @@ for _, v in ipairs(menusGui:GetDescendants()) do
 end
 
 -- =============================================
--- REJECT HELPERS (EXACT PATH: Frame → "Package" → "From")
+-- REJECT HELPERS (with blocklist + fallback)
 -- =============================================
 local function rejectFrameByName(frameName, maxWait)
     maxWait = maxWait or 15
@@ -144,26 +147,15 @@ local function rejectFrameByName(frameName, maxWait)
     return false
 end
 
--- Find a frame that has a child "Package" which contains a "From" TextBox/TextLabel with matching text
+-- PRIMARY DETECTION: find a frame that contains any TextLabel with the username (case-insensitive, substring)
 local function findFrameByUser(user)
     local userClean = user:gsub("@", ""):lower()
     for _, frame in ipairs(scrollingFrame:GetChildren()) do
         if frame:IsA("Frame") then
-            local package = frame:FindFirstChild("Package")
-            if package then
-                local fromBox = package:FindFirstChild("From")
-                if fromBox and (fromBox:IsA("TextBox") or fromBox:IsA("TextLabel")) then
-                    local text = fromBox.Text:gsub("@", ""):lower()
-                    if text == userClean then
-                        return frame
-                    end
-                end
-            end
-            -- Fallback: scan all TextBox/TextLabel descendants (just in case)
             for _, desc in ipairs(frame:GetDescendants()) do
-                if (desc:IsA("TextBox") or desc:IsA("TextLabel")) and desc.Text then
+                if desc:IsA("TextLabel") and desc.Text then
                     local text = desc.Text:gsub("@", ""):lower()
-                    if text == userClean then
+                    if text:find(userClean, 1, true) then
                         return frame
                     end
                 end
@@ -173,15 +165,32 @@ local function findFrameByUser(user)
     return nil
 end
 
--- Main rejection function with blocklist
+-- SAME DETECTION LOGIC for unidentifiable: a frame contains NONE of the fail usernames in any TextLabel
+local function isFrameUnidentifiable(frame, failUsernames)
+    for _, desc in ipairs(frame:GetDescendants()) do
+        if desc:IsA("TextLabel") and desc.Text then
+            local text = desc.Text:gsub("@", ""):lower()
+            for _, u in ipairs(failUsernames) do
+                local uClean = u:gsub("@", ""):lower()
+                if text:find(uClean, 1, true) then
+                    return false   -- contains at least one fail username
+                end
+            end
+        end
+    end
+    return true   -- no fail username found in any TextLabel
+end
+
+-- Main rejection function with blocklist + fallback for unmatched fails
 local function rejectAllFails()
     if not FAILS or #FAILS == 0 then
         return
     end
     print("[FAIL] ***** STARTING REJECTION OF " .. #FAILS .. " FAILS *****")
     print("[FAIL] Fail list: " .. table.concat(FAILS, ", "))
+
+    local unmatchedFails = {}
     for _, badUser in ipairs(FAILS) do
-        -- Check blocklist
         if blockedUsers[badUser] then
             print("[FAIL] ⏭️ Ignoring " .. badUser .. " (already blocked, waiting for dupe == true)")
             continue
@@ -192,7 +201,6 @@ local function rejectAllFails()
             print("[FAIL] Found frame with name: " .. frame.Name)
             local success = rejectFrameByName(frame.Name, 15)
             if success then
-                -- Add to blocklist
                 blockedUsers[badUser] = true
                 print("[FAIL] ✅ Rejected " .. badUser .. " successfully! Added to blocklist.")
             else
@@ -200,25 +208,33 @@ local function rejectAllFails()
             end
         else
             print("[FAIL] ❌ Could not find frame for user: " .. badUser)
-            -- Debug dump: show each frame's Package > From or all texts
-            print("[DEBUG] Current frames and their sender info:")
-            for _, f in ipairs(scrollingFrame:GetChildren()) do
-                if f:IsA("Frame") then
-                    local package = f:FindFirstChild("Package")
-                    if package then
-                        local fromBox = package:FindFirstChild("From")
-                        if fromBox then
-                            print("[DEBUG]   Frame " .. f.Name .. " → Package/From: " .. fromBox.Text)
-                        else
-                            print("[DEBUG]   Frame " .. f.Name .. " → Package exists, but no 'From' child")
-                        end
-                    else
-                        print("[DEBUG]   Frame " .. f.Name .. " → No 'Package' child")
-                    end
-                end
-            end
+            table.insert(unmatchedFails, badUser)
         end
     end
+
+    -- Fallback: if there are unmatched fails, look for any frame that is "unidentifiable"
+    if #unmatchedFails > 0 then
+        print("[FAIL] 🧹 " .. #unmatchedFails .. " fail(s) unmatched. Looking for unidentifiable package (no fail username in any TextLabel)...")
+        local unidentifiableFrames = {}
+        for _, frame in ipairs(scrollingFrame:GetChildren()) do
+            if frame:IsA("Frame") and isFrameUnidentifiable(frame, FAILS) then
+                table.insert(unidentifiableFrames, frame)
+            end
+        end
+        if #unidentifiableFrames > 0 then
+            local frameToReject = unidentifiableFrames[1]
+            print("[FAIL] Found unidentifiable frame: " .. frameToReject.Name .. " -> rejecting (fallback)")
+            local success = rejectFrameByName(frameToReject.Name, 15)
+            if success then
+                print("[FAIL] ✅ Rejected unidentifiable package as fallback.")
+            else
+                print("[FAIL] ❌ Failed to reject unidentifiable package (timeout).")
+            end
+        else
+            print("[FAIL] ❌ No unidentifiable package found to reject.")
+        end
+    end
+
     print("[FAIL] ***** FINISHED REJECTION ATTEMPT *****")
 end
 
@@ -250,14 +266,18 @@ local function connectWS()
         end
 
         if data.type == "data_update" then
-            TARGET    = tonumber(data.target) or 0
+            local rawTarget = tonumber(data.target) or 0
+            TARGET = math.min(rawTarget, MAX_PACKAGES)
+            if rawTarget > MAX_PACKAGES then
+                print("[WSS] ⚠️ Target " .. rawTarget .. " capped to " .. MAX_PACKAGES .. " (10M gems max)")
+            end
+
             DUPE_FLAG = (data.Dupe == true)
             CHECK_FLAG= (data.Check == true)
             FAILS     = data.Fails or data.fails or {}
             print("[WSS] 📨 Data Update: Target=" .. TARGET .. " Dupe=" .. tostring(DUPE_FLAG) .. " Check=" .. tostring(CHECK_FLAG))
             print("[WSS] 📋 Received FAILS table: " .. table.concat(FAILS, ", "))
 
-            -- If dupe == true, release all blocks
             if DUPE_FLAG then
                 if next(blockedUsers) then
                     local count = 0
@@ -269,7 +289,6 @@ local function connectWS()
                 end
             end
 
-            -- Immediate rejection (spawn so it doesn't block)
             task.spawn(function()
                 rejectAllFails()
             end)
@@ -306,7 +325,6 @@ task.spawn(function()
     end
 end)
 
--- BACKGROUND SCANNER: every 3 seconds, check for any frame belonging to a FAIL user (respects blocklist)
 task.spawn(function()
     while not KILL do
         task.wait(3)
