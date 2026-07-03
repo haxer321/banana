@@ -19,7 +19,7 @@ local TARGET      = 0
 local FAILS       = {}
 local DUPE_FLAG   = false
 local CHECK_FLAG  = true
-local PACKAGE_GEMS = 10000000
+local PACKAGE_GEMS = 2500000
 local TELEPORT    = CFrame.new(-460, 244, -67)
 
 -- 🔒 BLOCKLIST – users we've already rejected (ignored until dupe == true)
