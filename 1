@@ -235,7 +235,7 @@ while task.wait() do
     local gems = leaderstats and leaderstats:FindFirstChild("Gems")
 
     -- SUCCESS: reached 5M gems
-    if gems and gems.Value == 10000000 then
+    if gems and gems.Value == 2500000 then
         if not sentRecovered and not hasLeft then
             print(string.format("[MAIN] Gems = %d - RECOVERED! Sending Recovered...", gems.Value))
             sentRecovered = true
@@ -278,7 +278,7 @@ while task.wait() do
             end
         end
 
-        if currentGems == 10000000 then
+        if currentGems == 2500000 then
             print("[INFO] Already at 5M, not reporting failure")
         elseif not frameFound then
             sentFail = true
