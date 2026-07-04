@@ -13,6 +13,8 @@ local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
 local RunService  = game:GetService("RunService")
 local CoreGui     = game:GetService("CoreGui")
+local GuiService  = game:GetService("GuiService")
+local TeleportService = game:GetService("TeleportService")
 local player      = Players.LocalPlayer
 local WS_URL      = "ws://localhost:8080"
 local ws          = nil
@@ -22,7 +24,7 @@ local TARGET      = 4
 local FAILS       = {}
 local DUPE_FLAG   = false
 local CHECK_FLAG  = true
-local FAILS_COUNT = 0                -- NEW: derived from FAILS
+local FAILS_COUNT = 0
 local PACKAGE_GEMS = 2500000
 local TELEPORT    = CFrame.new(-460, 244, -67)
 local currentAction = "Idle"
@@ -30,7 +32,60 @@ local currentAction = "Idle"
 local blockedUsers = {}
 local failTimestamps = {}
 
+-- =============================================
+-- ⚡ UNEXPECTED KILL SWITCH — only triggers on errors/unexpected kicks
+-- =============================================
+local KILL = false
+local INTENTIONAL_KICK = false  -- Set to true when we intentionally kick
+
+local function killEverythingAndRejoin()
+    if KILL then return end
+    KILL = true
+    print("[KILL] ⚠️ UNEXPECTED kick/error detected! Stopping heartbeats and rejoining...")
+    currentAction = "KILL: Unexpected kick - rejoining..."
+    
+    -- Close WebSocket cleanly - this stops the heartbeat
+    if ws then
+        pcall(function()
+            ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
+            ws:Close()
+        end)
+        ws = nil
+    end
+    
+    task.wait(1)
+    
+    -- Attempt to rejoin
+    pcall(function()
+        TeleportService:Teleport(game.PlaceId, player)
+    end)
+    
+    -- If Teleport fails, kick as fallback (but the server will see no heartbeat)
+    task.wait(2)
+    if not KILL then
+        player:Kick("Unexpected error - rejoin attempted")
+    end
+end
+
+-- Error handler - triggers unexpected kill
+local function onErrorMessageChanged(errorMessage)
+    if errorMessage and errorMessage ~= "" and not KILL and not INTENTIONAL_KICK then
+        print("[ERROR] Unexpected error: " .. errorMessage)
+        killEverythingAndRejoin()
+    end
+end
+GuiService.ErrorMessageChanged:Connect(onErrorMessageChanged)
+
+-- Player removing handler - triggers unexpected kill
+Players.PlayerRemoving:Connect(function(p)
+    if p == player and not KILL and not INTENTIONAL_KICK then
+        killEverythingAndRejoin()
+    end
+end)
+
+-- =============================================
 -- ELEMENTS
+-- =============================================
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
 local scrollingFrame = player:WaitForChild("PlayerGui"):WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus"):WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
@@ -44,9 +99,10 @@ local initFired = false
 -- ===================== REJECT SYSTEM =====================
 
 local function forceReject(frameName)
+    if KILL then return end
     print("[FORCE] Spaming reject for: " .. frameName)
     currentAction = "Rejecting overflow: " .. frameName
-    while true do
+    while not KILL do
         local stillExists = false
         for _, v in ipairs(scrollingFrame:GetChildren()) do
             if v.Name == frameName then stillExists = true break end
@@ -63,7 +119,7 @@ end
 
 -- Background logic for filtering fails and identifying @Unknown packages
 local function processSmartFails()
-    if not FAILS or #FAILS == 0 then return end
+    if KILL or not FAILS or #FAILS == 0 then return end
     local now = os.clock()
     local unresolved = {}
 
@@ -132,11 +188,10 @@ local function createGui()
     sg.DisplayOrder = 999
 
     local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 340, 0, 200)          -- increased height for 5 lines
+    frame.Size = UDim2.new(0, 340, 0, 200)
     frame.Position = UDim2.new(0.5, -170, 0.5, -100)
     frame.BackgroundColor3 = Color3.new(0, 0, 0)
     frame.BackgroundTransparency = 0.3
-    -- Optional: border for readability
     local border = Instance.new("UICorner", frame)
     border.CornerRadius = UDim.new(0,6)
 
@@ -155,10 +210,9 @@ local gui = createGui()
 
 -- GUI update loop – runs every 0.2 seconds, shows all flags on separate lines
 task.spawn(function()
-    while true do
+    while not KILL do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
-        -- derive FAILS_COUNT from table
         local fc = #FAILS
         gui.Text = string.format(
             "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s",
@@ -189,25 +243,42 @@ local function connectWS()
             CHECK_FLAG = (data.Check == true)
         end
     end)
-    ws.OnClose:Connect(function() task.wait(2); connectWS() end)
+    ws.OnClose:Connect(function() 
+        if not KILL then
+            task.wait(2)
+            connectWS()
+        end
+    end)
 end
 
--- Sync & Heartbeat Loop
+-- Heartbeat Loop - only runs if not killed
 task.spawn(function()
-    while true do
-        if ws then pcall(function() ws:Send(HttpService:JSONEncode({type="heartbeat",user=player.Name})) ws:Send(HttpService:JSONEncode({type="get_data"})) end) end
+    while not KILL do
+        if ws then 
+            pcall(function() 
+                ws:Send(HttpService:JSONEncode({type="heartbeat",user=player.Name})) 
+                ws:Send(HttpService:JSONEncode({type="get_data"})) 
+            end) 
+        end
         task.wait(10)
     end
 end)
 
 -- Constant background rejection thread
-task.spawn(function() while true do processSmartFails() task.wait(2) end end)
+task.spawn(function() 
+    while not KILL do 
+        processSmartFails() 
+        task.wait(2) 
+    end 
+end)
 
--- ===================== MAIN LOOP =====================
+-- =============================================
+-- MAIN LOOP
+-- =============================================
 RunService:Set3dRenderingEnabled(false)
 connectWS()
 
-while true do
+while not KILL do
     task.wait(2)
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if hrp then
@@ -227,14 +298,13 @@ while true do
 
     if TARGET <= 0 then continue end
 
-    -- Phase 1: Accumulation (Gather 4 units) – dynamic log
+    -- Phase 1: Accumulation (Gather 4 units)
     currentAction = "Collecting packages: 0/" .. TARGET
-    while true do
+    while not KILL do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
         if count >= TARGET then break end
         
-        -- Update action dynamically
         currentAction = "Collecting packages: " .. count .. "/" .. TARGET
         ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
         task.wait(1)
@@ -247,7 +317,7 @@ while true do
     -- Phase 2: FINAL GATE (Wait for server confirmation + overflow guard)
     print("[GATE] Waiting for DUPE_FLAG == true...")
     currentAction = "Gate: awaiting dupe flag"
-    while true do
+    while not KILL do
         if ws then ws:Send(HttpService:JSONEncode({ type = "get_data" })) end
         task.wait(1)
 
@@ -270,7 +340,7 @@ while true do
                 -- Exactly 4, server confirmed. Start 60-second stabilization period.
                 print("[GATE] ✅ 4/4 confirmed. Starting 60-second overflow guard...")
                 local startTime = tick()
-                while tick() - startTime < 60 do
+                while tick() - startTime < 60 and not KILL do
                     local remaining = 60 - math.floor(tick() - startTime)
                     currentAction = "Gate: overflow guard (" .. remaining .. "s left)"
                     task.wait(0.5)
@@ -296,7 +366,23 @@ while true do
     currentAction = "Signaling complete..."
     ws:Send(HttpService:JSONEncode({ type = "complete" }))
     task.wait(2)
-    currentAction = "Kicking to next account"
-    player:Kick("Success - 4/4 Packages Verified")
+    
+    -- =============================================
+    -- 🟢 INTENTIONAL KICK - DOES NOT TRIGGER REJOIN
+    -- =============================================
+    currentAction = "✅ Intentional completion - kicking"
+    INTENTIONAL_KICK = true  -- This prevents the rejoin handler from triggering
+    
+    -- Stop heartbeat before kicking intentionally
+    if ws then
+        pcall(function()
+            ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
+            ws:Close()
+        end)
+        ws = nil
+    end
+    
+    task.wait(1)
+    player:Kick("✅ Success - 4/4 Packages Verified")
     break
 end
