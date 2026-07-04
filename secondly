@@ -1,7 +1,8 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — FINAL: 10M CAP + SAME DETECTION FOR FALLBACK
+-- 📡 ANDROID AUTOMATOR — FINAL: WAIT FOR DUPE == TRUE
 -- Detection: scans all TextLabel descendants (includes From + message)
 -- Fallback: if a fail user isn't matched, reject any frame that contains NONE of the fail usernames
+-- Completion: only when DUPE_FLAG becomes true
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -367,10 +368,11 @@ while not KILL do
 
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
+    -- ✅ WAIT FOR DUPE_FLAG TO BECOME TRUE (instead of CHECK_FLAG == false)
     local timeout = os.clock() + 180
-    print("[WSS] Target met. Waiting for Server Confirmation (Check=false)...")
+    print("[WSS] Target met. Waiting for DUPE_FLAG to become true...")
     while os.clock() < timeout do
-        if CHECK_FLAG == false then break end
+        if DUPE_FLAG == true then break end
         task.wait(1)
         if ws then ws:Send(HttpService:JSONEncode({ type = "get_data" })) end
         updateGui()
@@ -378,7 +380,7 @@ while not KILL do
 
     if KILL then break end
 
-    -- Reject excess packages
+    -- Reject excess packages (if any remain above TARGET)
     local frames = {}
     for _, v in ipairs(scrollingFrame:GetChildren()) do
         if v:IsA("Frame") then table.insert(frames, v) end
