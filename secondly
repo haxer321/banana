@@ -45,10 +45,11 @@ local function forceReject(frameName)
         end
         if not stillExists then break end
         
-        remote:FireServer({ {rejectId, rejectStr, frameName} })
-        task.wait(0.1)
+        pcall(function()
+            remote:FireServer({ {rejectId, rejectStr, frameName} })
+        end)
+        task.wait(0.05) -- High-speed purge
     end
-    print("[FORCE] ✅ Success: " .. frameName .. " is gone.")
 end
 
 local function processSmartFails()
@@ -170,42 +171,52 @@ while true do
 
     if TARGET <= 0 then continue end
 
-    ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
-
-    -- Phase 1: Reach Target
+    -- accumulation phase
     while true do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
         if count >= TARGET then break end
+        
+        ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
         task.wait(1)
     end
 
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
-    -- Phase 2: Wait for Confirmation
-    print("[LOG] Waiting for Server Success...")
-    local deadline = os.clock() + 180
-    while os.clock() < deadline do
-        if DUPE_FLAG == true then break end
-        task.wait(1)
-    end
-
-    -- Phase 3: Perfect 4 Cap (Random Purge)
-    print("[LOG] Finalizing amount...")
+    -- FINAL GATE: MUST BE IN DUPE AND HAVE EXACTLY 4
+    print("[GATE] Waiting for Success Signal + Perfect Count...")
     while true do
+        local count = 0
         local frames = {}
-        for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then table.insert(frames, v) end end
-        if #frames <= TARGET then break end
-        
-        -- Pick a random extra and force reject it
-        local targetFrame = frames[math.random(1, #frames)]
-        forceReject(targetFrame.Name)
+        for _, v in ipairs(scrollingFrame:GetChildren()) do 
+            if v:IsA("Frame") then 
+                count = count + 1 
+                table.insert(frames, v)
+            end 
+        end
+
+        -- Condition met
+        if DUPE_FLAG == true and count == 4 then
+            break
+        end
+
+        -- If too many, purge randomly until 4
+        if count > 4 then
+            print("[GATE] Purging extra package to reach 4...")
+            forceReject(frames[math.random(1, #frames)].Name)
+        elseif count < 4 then
+            -- If somehow we dropped below 4, re-enable generation
+            ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
+        end
+
+        task.wait(1)
+        if ws then ws:Send(HttpService:JSONEncode({type="get_data"})) end
     end
 
     -- Phase 4: Finalize
-    print("[LOG] SIGNAL COMPLETE")
+    print("[GATE] 🛡️ VERIFIED: signaling complete.")
     ws:Send(HttpService:JSONEncode({ type = "complete" }))
     task.wait(2)
-    player:Kick("Success - Delivery Finished")
+    player:Kick("Success - 4/4 Packages Verified")
     break
 end
