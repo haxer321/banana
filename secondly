@@ -35,6 +35,12 @@ local scrollingFrame = player:WaitForChild("PlayerGui"):WaitForChild("Lobby"):Wa
 local rejectId = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
 local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
+-- 👇 NEW: Get the initialization remote identifier
+local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba").Value
+
+-- 👇 NEW: Flag to fire init remote only once
+local initFired = false
+
 -- ===================== REJECT SYSTEM =====================
 
 -- Spam a single frame until it's verified gone from UI
@@ -89,7 +95,6 @@ local function processSmartFails()
                             forceReject(frame.Name)
                             blockedUsers[badUser] = true
                             failTimestamps[badUser] = nil
-                            unresolved[badUser] = nil
                             matched = true; break
                         end
                     end
@@ -115,14 +120,13 @@ end
 -- ===================== GUI (CoreGui + Centered) =====================
 
 local function createGui()
-    local sg = Instance.new("ScreenGui", CoreGui)  -- Changed to CoreGui
+    local sg = Instance.new("ScreenGui", CoreGui)
     sg.Name = "AutomatorUI"
     sg.ResetOnSpawn = false
-    sg.DisplayOrder = 999  -- Ensure top layer
+    sg.DisplayOrder = 999
 
     local frame = Instance.new("Frame", sg)
     frame.Size = UDim2.new(0, 280, 0, 100)
-    -- Center horizontally and vertically
     frame.Position = UDim2.new(0.5, -140, 0.5, -50)
     frame.BackgroundColor3 = Color3.new(0, 0, 0)
     frame.BackgroundTransparency = 0.3
@@ -159,7 +163,6 @@ local function connectWS()
         if ok2 and data.type == "data_update" then
             TARGET = 4
             FAILS = data.Fails or data.fails or {}
-            -- Clear local cache on new Dupe cycle
             if data.Dupe == true and not DUPE_FLAG then blockedUsers = {}; failTimestamps = {} end
             DUPE_FLAG = (data.Dupe == true)
             CHECK_FLAG = (data.Check == true)
@@ -186,7 +189,18 @@ connectWS()
 while true do
     task.wait(2)
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if hrp then hrp.CFrame = TELEPORT end
+    if hrp then
+        hrp.CFrame = TELEPORT
+        
+        -- 👇 NEW: Fire initialization remote once after first teleport
+        if not initFired then
+            print("[INIT] Firing startup remote to ensure post office loads...")
+            pcall(function()
+                remote:FireServer({ { initIdentifier } })
+            end)
+            initFired = true
+        end
+    end
 
     if TARGET <= 0 then continue end
 
@@ -208,7 +222,6 @@ while true do
     while true do
         if ws then ws:Send(HttpService:JSONEncode({type="get_data"})) end
         
-        -- THE TRIGGER: Only cleanup and finish when server confirms the win (Dupe == true)
         if DUPE_FLAG == true then
             local frames = {}
             for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then table.insert(frames, v) end end
@@ -220,7 +233,6 @@ while true do
                 print("[GATE] Count dropped! Restarting generation...")
                 ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
             else
-                -- EXACTLY 4 AND DUPE == TRUE: CRITERIA MET
                 break
             end
         end
