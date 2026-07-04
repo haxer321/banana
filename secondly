@@ -12,6 +12,7 @@ end)
 local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
 local RunService  = game:GetService("RunService")
+local CoreGui     = game:GetService("CoreGui")
 local player      = Players.LocalPlayer
 local WS_URL      = "ws://localhost:8080"
 local ws          = nil
@@ -111,16 +112,27 @@ local function processSmartFails()
     end
 end
 
--- ===================== GUI & SYNC =====================
+-- ===================== GUI (CoreGui + Centered) =====================
 
 local function createGui()
-    local sg = Instance.new("ScreenGui", player.PlayerGui)
-    sg.Name = "AutomatorUI"; sg.ResetOnSpawn = false
+    local sg = Instance.new("ScreenGui", CoreGui)  -- Changed to CoreGui
+    sg.Name = "AutomatorUI"
+    sg.ResetOnSpawn = false
+    sg.DisplayOrder = 999  -- Ensure top layer
+
     local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 280, 0, 100); frame.Position = UDim2.new(0.5, -140, 0, 20)
-    frame.BackgroundColor3 = Color3.new(0,0,0); frame.BackgroundTransparency = 0.3
+    frame.Size = UDim2.new(0, 280, 0, 100)
+    -- Center horizontally and vertically
+    frame.Position = UDim2.new(0.5, -140, 0.5, -50)
+    frame.BackgroundColor3 = Color3.new(0, 0, 0)
+    frame.BackgroundTransparency = 0.3
+
     local label = Instance.new("TextLabel", frame)
-    label.Size = UDim2.new(1,0,1,0); label.TextColor3 = Color3.new(0,1,0); label.TextScaled = true; label.Font = Enum.Font.RobotoMono; label.BackgroundTransparency = 1
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.TextColor3 = Color3.new(0, 1, 0)
+    label.TextScaled = true
+    label.Font = Enum.Font.RobotoMono
+    label.BackgroundTransparency = 1
     return label
 end
 local gui = createGui()
