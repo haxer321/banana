@@ -1,29 +1,32 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — ULTIMATE WSS SCRIPT
+-- 📡 ANDROID AUTOMATOR — ULTIMATE PRODUCTION SCRIPT
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
--- Anti-AFK
+-- Anti-AFK Background Task
 task.spawn(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))()
 end)
 
 local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
+local RunService   = game:GetService("RunService")
 local player      = Players.LocalPlayer
 local WS_URL      = "ws://localhost:8080"
 local ws          = nil
 
 -- CONFIG & STATE
-local TARGET      = 4       -- Hardcoded: 4 pkgs = 10M Gems
-local FAILS       = {}      -- List of failed usernames from server
+local TARGET      = 4               -- Hardcoded 4 pkgs (10M Gems)
+local FAILS       = {}              -- Failed users from server
 local DUPE_FLAG   = false
 local CHECK_FLAG  = true
+local PACKAGE_GEMS = 2500000        -- 2.5M Per unit
 local TELEPORT    = CFrame.new(-460, 244, -67)
 
--- BLOCKLIST (Prevents spam-rejecting the same user in one cycle)
-local blockedUsers = {}
+-- REJECTION CACHE
+local blockedUsers = {}             -- Users we rejected in this cycle
+local failTimestamps = {}           -- Tracking how long a fail has been unresolved
 
 -- ROBLOX ELEMENTS
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -34,74 +37,119 @@ local scrollingFrame = playerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"
 local rejectId = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
 local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
--- ===================== REJECT SYSTEM =====================
+-- ===================== GUI & OPTIMIZATION =====================
+
+local function createGui()
+    local sg = Instance.new("ScreenGui", playerGui)
+    sg.Name = "DeliveryCounter"; sg.ResetOnSpawn = false
+    local frame = Instance.new("Frame", sg)
+    frame.Size = UDim2.new(0, 300, 0, 110); frame.Position = UDim2.new(0.5, -150, 0, 10)
+    frame.BackgroundColor3 = Color3.fromRGB(15, 15, 20); frame.BackgroundTransparency = 0.2; frame.BorderSizePixel = 0
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+    
+    local pkg = Instance.new("TextLabel", frame)
+    pkg.Size = UDim2.new(1,0,0.4,0); pkg.TextColor3 = Color3.fromRGB(0, 255, 150); pkg.TextScaled = true; pkg.Font = Enum.Font.RobotoMono; pkg.BackgroundTransparency = 1
+    
+    local status = Instance.new("TextLabel", frame)
+    status.Size = UDim2.new(1,0,0.3,0); status.Position = UDim2.new(0,0,0.4,0); status.TextColor3 = Color3.new(1,1,1); status.TextScaled = true; status.Font = Enum.Font.RobotoMono; status.BackgroundTransparency = 1
+    
+    local flags = Instance.new("TextLabel", frame)
+    flags.Size = UDim2.new(1,0,0.3,0); flags.Position = UDim2.new(0,0,0.7,0); flags.TextColor3 = Color3.fromRGB(255, 200, 0); flags.TextScaled = true; flags.Font = Enum.Font.RobotoMono; flags.BackgroundTransparency = 1
+    
+    return pkg, status, flags
+end
+
+local guiPkg, guiStatus, guiFlags = createGui()
+
+task.spawn(function()
+    while true do
+        local count = 0
+        for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
+        guiPkg.Text = "[PKG] " .. count .. " / " .. TARGET
+        guiFlags.Text = "DUPE: " .. tostring(DUPE_FLAG) .. " | CHECK: " .. tostring(CHECK_FLAG)
+        task.wait(0.5)
+    end
+end)
+
+-- Optimizations
+RunService:Set3dRenderingEnabled(false)
+for _, v in ipairs(playerGui.Lobby.PostOffice.Menus:GetDescendants()) do
+    if v:IsA("TextButton") or v:IsA("TextBox") then v.Active = true; v.Selectable = true end
+end
+
+-- ===================== ADVANCED REJECT SYSTEM =====================
 
 local function fireReject(frameName)
-    print("[REJECT] Removing frame: " .. frameName)
+    print("[REJECT] Purging frame: " .. frameName)
     remote:FireServer({ {rejectId, rejectStr, frameName} })
 end
 
 local function processSmartFails()
     if not FAILS or #FAILS == 0 then return end
     
-    local unresolvedFails = {}
-    for _, u in ipairs(FAILS) do 
-        local name = u:gsub("@",""):lower()
-        if not blockedUsers[name] then unresolvedFails[name] = true end
+    local unresolved = {}
+    local now = os.clock()
+
+    -- Update tracking timestamps for unresolved fails
+    for _, user in ipairs(FAILS) do
+        local name = user:gsub("@",""):lower()
+        if not blockedUsers[name] then
+            unresolved[name] = true
+            if not failTimestamps[name] then failTimestamps[name] = now end
+        end
     end
-    
-    if not next(unresolvedFails) then return end
+
+    if not next(unresolved) then return end
 
     local unknownFrames = {}
-
-    -- Phase 1: Name Match & Gather Unknowns
+    
+    -- Phase 1 & 2: Name Match + Content Scan
     for _, frame in ipairs(scrollingFrame:GetChildren()) do
         if not frame:IsA("Frame") then continue end
-        
-        local senderName = "unknown"
-        local p = frame:FindFirstChild("Package")
-        local f = p and p:FindFirstChild("From")
-        if f then senderName = f.Text:gsub("@",""):lower() end
+        local sender = "unknown"
+        local from = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
+        if from then sender = from.Text:gsub("@",""):lower() end
 
-        if unresolvedFails[senderName] then
-            print("[FAIL] Found by Name: " .. senderName)
+        -- Identity Match
+        if unresolved[sender] then
             fireReject(frame.Name)
-            blockedUsers[senderName] = true
-            unresolvedFails[senderName] = nil
-        elseif senderName:find("unknown") then
-            table.insert(unknownFrames, frame)
-        end
-    end
-
-    -- Phase 2: Scan Unknowns' Content for fail names
-    for i = #unknownFrames, 1, -1 do
-        local frame = unknownFrames[i]
-        local foundInMsg = false
-        
-        for _, desc in ipairs(frame:GetDescendants()) do
-            if (desc:IsA("TextLabel") or desc:IsA("TextBox")) and desc.Text then
-                local txt = desc.Text:lower()
-                for badUser, _ in pairs(unresolvedFails) do
-                    if txt:find(badUser) then
-                        print("[FAIL] Found " .. badUser .. " inside @Unknown note!")
-                        fireReject(frame.Name)
-                        blockedUsers[badUser] = true
-                        unresolvedFails[badUser] = nil
-                        table.remove(unknownFrames, i)
-                        foundInMsg = true
-                        break
+            blockedUsers[sender] = true
+            failTimestamps[sender] = nil
+            unresolved[sender] = nil
+        elseif sender:find("unknown") then
+            -- Note Scan (Content check for @Unknown)
+            local foundInMsg = false
+            for _, d in ipairs(frame:GetDescendants()) do
+                if d:IsA("TextLabel") and d.Text then
+                    local txt = d.Text:lower()
+                    for badUser, _ in pairs(unresolved) do
+                        if txt:find(badUser) then
+                            print("[FAIL] Found " .. badUser .. " in @Unknown msg")
+                            fireReject(frame.Name)
+                            blockedUsers[badUser] = true
+                            failTimestamps[badUser] = nil
+                            unresolved[badUser] = nil
+                            foundInMsg = true; break
+                        end
                     end
                 end
+                if foundInMsg then break end
             end
-            if foundInMsg then break end
+            if not foundInMsg then table.insert(unknownFrames, frame) end
         end
     end
 
-    -- Phase 3: Aggressive Fallback (Reject any @Unknown if we still have unresolved fails)
-    if #unknownFrames > 0 and next(unresolvedFails) then
-        print("[FAIL] Unresolved fails exist. Purging " .. #unknownFrames .. " unidentifiable packages.")
-        for _, frame in ipairs(unknownFrames) do
-            fireReject(frame.Name)
+    -- Phase 3: Aggressive Fallback (1 Minute Timeout)
+    for badUser, startTime in pairs(failTimestamps) do
+        if now - startTime > 60 and not blockedUsers[badUser] then
+            if #unknownFrames > 0 then
+                local fallbackFrame = unknownFrames[1]
+                print("[FAIL] Fallback: Rejecting " .. fallbackFrame.Name .. " for unresolved " .. badUser)
+                fireReject(fallbackFrame.Name)
+                blockedUsers[badUser] = true
+                failTimestamps[badUser] = nil
+                table.remove(unknownFrames, 1)
+            end
         end
     end
 end
@@ -109,40 +157,35 @@ end
 -- ===================== WS COMMUNICATION =====================
 
 local function connectWS()
-    print("[WSS] Syncing with Android Service...")
+    print("[WSS] Connecting to Android...")
     local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
     if not ok or not socket then task.wait(5); return connectWS() end
     ws = socket
 
-    -- Set priority on connect
     ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
 
     ws.OnMessage:Connect(function(msg)
         local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
         if not ok2 or data.type ~= "data_update" then return end
 
-        TARGET = 4 -- Force target to 4
+        TARGET = 4
         FAILS  = data.Fails or data.fails or {}
         
-        -- Reset blocks on new dupe cycle
+        -- Cycle Reset
         if data.Dupe == true and not DUPE_FLAG then
-            print("[WSS] Cycle Reset: Clearing Rejection Cache")
+            print("[WSS] Resetting Cycle Data")
             blockedUsers = {}
+            failTimestamps = {}
         end
         
         DUPE_FLAG = (data.Dupe == true)
         CHECK_FLAG = (data.Check == true)
     end)
 
-    ws.OnClose:Connect(function() 
-        print("[WSS] Connection lost! Retrying...")
-        task.wait(2); connectWS() 
-    end)
+    ws.OnClose:Connect(function() task.wait(2); connectWS() end)
 end
 
--- ===================== BACKGROUND TASKS =====================
-
--- Heartbeat & Data Fetch (Port 8080)
+-- BACKGROUND TASKS
 task.spawn(function()
     while true do
         if ws then
@@ -155,31 +198,29 @@ task.spawn(function()
     end
 end)
 
--- Constant Rejection Monitor
 task.spawn(function()
     while true do
         processSmartFails()
-        task.wait(3)
+        task.wait(2)
     end
 end)
 
--- ===================== MAIN EXECUTION =====================
+-- ===================== MAIN CYCLE =====================
 connectWS()
 
 while true do
-    task.wait(1)
-    
-    -- Keep position locked
+    task.wait(2)
+    -- Position Lock
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if hrp then hrp.CFrame = TELEPORT end
 
-    if TARGET <= 0 then continue end
+    if TARGET <= 0 then guiStatus.Text = "Waiting for Target..."; continue end
 
-    -- Tell Android to start generation
+    -- Active Work
+    guiStatus.Text = "🚀 Syncing Packages..."
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
 
-    -- Sync Phase (Wait for 4 packages)
-    print("[LOG] Waiting for " .. TARGET .. " packages...")
+    -- Sync Loop
     while true do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
@@ -187,32 +228,21 @@ while true do
         task.wait(1)
     end
 
-    -- Tell Android to stop generation
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
-    -- Verification Phase (Wait for Server to confirm success)
-    print("[LOG] Target met. Waiting for DUPE_FLAG confirmation...")
-    local timeout = os.clock() + 180
-    while os.clock() < timeout do
-        if DUPE_FLAG == true then break end -- Server confirms delivery
+    -- Confirmation Phase
+    guiStatus.Text = "⌛ Waiting for Server Success..."
+    local deadline = os.clock() + 180
+    while os.clock() < deadline do
+        if DUPE_FLAG == true then break end -- Confirmation signal
         task.wait(1)
         if ws then ws:Send(HttpService:JSONEncode({ type = "get_data" })) end
     end
 
-    -- Cleanup any overflow packages
-    local frames = {}
-    for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then table.insert(frames, v) end end
-    if #frames > TARGET then
-        for i = TARGET + 1, #frames do
-            fireReject(frames[i].Name)
-            task.wait(0.1)
-        end
-    end
-
-    -- SIGNAL SUCCESS & FINISH
-    print("[DONE] Signaling Success to Android App...")
+    -- Signal Success
+    guiStatus.Text = "✅ Complete! Finalizing..."
     ws:Send(HttpService:JSONEncode({ type = "complete" }))
     task.wait(2)
-    player:Kick("Protocol Successful - Next Account Requested")
+    player:Kick("Protocol Successful")
     break
 end
