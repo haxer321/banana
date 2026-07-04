@@ -4,13 +4,14 @@
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
--- Anti-AFK
+-- Anti-AFK Background Task
 task.spawn(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))()
 end)
-game:GetService("RunService"):Set3dRenderingEnabled(false)
+
 local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
+local RunService  = game:GetService("RunService")
 local player      = Players.LocalPlayer
 local WS_URL      = "ws://localhost:8080"
 local ws          = nil
@@ -35,7 +36,7 @@ local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
 -- ===================== REJECT SYSTEM =====================
 
--- Spam a single frame until it's verified gone
+-- Spam a single frame until it's verified gone from UI
 local function forceReject(frameName)
     print("[FORCE] Spaming reject for: " .. frameName)
     while true do
@@ -48,10 +49,11 @@ local function forceReject(frameName)
         pcall(function()
             remote:FireServer({ {rejectId, rejectStr, frameName} })
         end)
-        task.wait(0.05) -- High-speed purge
+        task.wait(0.05) 
     end
 end
 
+-- Background logic for filtering fails and identifying @Unknown packages
 local function processSmartFails()
     if not FAILS or #FAILS == 0 then return end
     local now = os.clock()
@@ -97,7 +99,7 @@ local function processSmartFails()
         end
     end
 
-    -- 60s Fallback for Unresolved Fails
+    -- 60s Fallback for Unresolved Fails: If a fail exists for >60s, toss any @Unknown
     for badUser, start in pairs(failTimestamps) do
         if now - start > 60 and #unknownFrames > 0 then
             print("[FALLBACK] Rejecting unknown for " .. badUser)
@@ -118,11 +120,12 @@ local function createGui()
     frame.Size = UDim2.new(0, 280, 0, 100); frame.Position = UDim2.new(0.5, -140, 0, 20)
     frame.BackgroundColor3 = Color3.new(0,0,0); frame.BackgroundTransparency = 0.3
     local label = Instance.new("TextLabel", frame)
-    label.Size = UDim2.new(1,0,1,0); label.TextColor3 = Color3.new(0,1,0); label.TextScaled = true; label.Font = Enum.Font.RobotoMono
+    label.Size = UDim2.new(1,0,1,0); label.TextColor3 = Color3.new(0,1,0); label.TextScaled = true; label.Font = Enum.Font.RobotoMono; label.BackgroundTransparency = 1
     return label
 end
 local gui = createGui()
 
+-- Continuous GUI Update
 task.spawn(function()
     while true do
         local count = 0
@@ -144,6 +147,7 @@ local function connectWS()
         if ok2 and data.type == "data_update" then
             TARGET = 4
             FAILS = data.Fails or data.fails or {}
+            -- Clear local cache on new Dupe cycle
             if data.Dupe == true and not DUPE_FLAG then blockedUsers = {}; failTimestamps = {} end
             DUPE_FLAG = (data.Dupe == true)
             CHECK_FLAG = (data.Check == true)
@@ -152,6 +156,7 @@ local function connectWS()
     ws.OnClose:Connect(function() task.wait(2); connectWS() end)
 end
 
+-- Sync & Heartbeat Loop
 task.spawn(function()
     while true do
         if ws then pcall(function() ws:Send(HttpService:JSONEncode({type="heartbeat",user=player.Name})) ws:Send(HttpService:JSONEncode({type="get_data"})) end) end
@@ -159,9 +164,11 @@ task.spawn(function()
     end
 end)
 
+-- Constant background rejection thread
 task.spawn(function() while true do processSmartFails() task.wait(2) end end)
 
 -- ===================== MAIN LOOP =====================
+RunService:Set3dRenderingEnabled(false)
 connectWS()
 
 while true do
@@ -171,7 +178,7 @@ while true do
 
     if TARGET <= 0 then continue end
 
-    -- accumulation phase
+    -- Phase 1: Accumulation (Gather 4 units)
     while true do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
@@ -181,39 +188,34 @@ while true do
         task.wait(1)
     end
 
+    -- Stop generation once count is met
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
-    -- FINAL GATE: MUST BE IN DUPE AND HAVE EXACTLY 4
-    print("[GATE] Waiting for Success Signal + Perfect Count...")
+    -- Phase 2: FINAL GATE (Only cleanup and complete when Server validates success)
+    print("[GATE] Waiting for DUPE_FLAG == true...")
     while true do
-        local count = 0
-        local frames = {}
-        for _, v in ipairs(scrollingFrame:GetChildren()) do 
-            if v:IsA("Frame") then 
-                count = count + 1 
-                table.insert(frames, v)
-            end 
-        end
-
-        -- Condition met
-        if DUPE_FLAG == true and count == 4 then
-            break
-        end
-
-        -- If too many, purge randomly until 4
-        if count > 4 then
-            print("[GATE] Purging extra package to reach 4...")
-            forceReject(frames[math.random(1, #frames)].Name)
-        elseif count < 4 then
-            -- If somehow we dropped below 4, re-enable generation
-            ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
-        end
-
-        task.wait(1)
         if ws then ws:Send(HttpService:JSONEncode({type="get_data"})) end
+        
+        -- THE TRIGGER: Only cleanup and finish when server confirms the win (Dupe == true)
+        if DUPE_FLAG == true then
+            local frames = {}
+            for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then table.insert(frames, v) end end
+            
+            if #frames > 4 then
+                print("[GATE] Win confirmed. Cleaning excess to perfect 4...")
+                forceReject(frames[math.random(1, #frames)].Name)
+            elseif #frames < 4 then
+                print("[GATE] Count dropped! Restarting generation...")
+                ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
+            else
+                -- EXACTLY 4 AND DUPE == TRUE: CRITERIA MET
+                break
+            end
+        end
+        task.wait(1)
     end
 
-    -- Phase 4: Finalize
+    -- Phase 4: Finalize & Next Account
     print("[GATE] 🛡️ VERIFIED: signaling complete.")
     ws:Send(HttpService:JSONEncode({ type = "complete" }))
     task.wait(2)
