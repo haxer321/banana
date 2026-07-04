@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — ULTIMATE STABLE SCRIPT
+-- 📡 ANDROID AUTOMATOR — DYNAMIC LOG + SEPARATE FLAGS
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -22,9 +22,10 @@ local TARGET      = 4
 local FAILS       = {}
 local DUPE_FLAG   = false
 local CHECK_FLAG  = true
+local FAILS_COUNT = 0                -- NEW: derived from FAILS
 local PACKAGE_GEMS = 2500000
 local TELEPORT    = CFrame.new(-460, 244, -67)
-local currentAction = "Idle"   -- <-- NEW: action log
+local currentAction = "Idle"
 
 local blockedUsers = {}
 local failTimestamps = {}
@@ -42,7 +43,6 @@ local initFired = false
 
 -- ===================== REJECT SYSTEM =====================
 
--- Spam a single frame until it's verified gone from UI
 local function forceReject(frameName)
     print("[FORCE] Spaming reject for: " .. frameName)
     currentAction = "Rejecting overflow: " .. frameName
@@ -132,27 +132,42 @@ local function createGui()
     sg.DisplayOrder = 999
 
     local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 320, 0, 130)  -- increased height for third line
-    frame.Position = UDim2.new(0.5, -160, 0.5, -65)
+    frame.Size = UDim2.new(0, 340, 0, 200)          -- increased height for 5 lines
+    frame.Position = UDim2.new(0.5, -170, 0.5, -100)
     frame.BackgroundColor3 = Color3.new(0, 0, 0)
     frame.BackgroundTransparency = 0.3
+    -- Optional: border for readability
+    local border = Instance.new("UICorner", frame)
+    border.CornerRadius = UDim.new(0,6)
 
     local label = Instance.new("TextLabel", frame)
-    label.Size = UDim2.new(1, 0, 1, 0)
+    label.Size = UDim2.new(1, -10, 1, -10)
+    label.Position = UDim2.new(0,5,0,5)
     label.TextColor3 = Color3.new(0, 1, 0)
     label.TextScaled = true
     label.Font = Enum.Font.RobotoMono
     label.BackgroundTransparency = 1
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextYAlignment = Enum.TextYAlignment.Top
     return label
 end
 local gui = createGui()
 
+-- GUI update loop – runs every 0.2 seconds, shows all flags on separate lines
 task.spawn(function()
     while true do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
-        gui.Text = string.format("PKGS: %d / %d\nDUPE: %s   CHECK: %s\nLOG: %s", 
-            count, TARGET, tostring(DUPE_FLAG), tostring(CHECK_FLAG), currentAction)
+        -- derive FAILS_COUNT from table
+        local fc = #FAILS
+        gui.Text = string.format(
+            "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s",
+            count, TARGET,
+            tostring(DUPE_FLAG),
+            tostring(CHECK_FLAG),
+            fc,
+            currentAction
+        )
         task.wait(0.2)
     end
 end)
@@ -212,16 +227,19 @@ while true do
 
     if TARGET <= 0 then continue end
 
-    -- Phase 1: Accumulation (Gather 4 units)
-    currentAction = "Waiting for 4 packages..."
+    -- Phase 1: Accumulation (Gather 4 units) – dynamic log
+    currentAction = "Collecting packages: 0/" .. TARGET
     while true do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
         if count >= TARGET then break end
         
+        -- Update action dynamically
+        currentAction = "Collecting packages: " .. count .. "/" .. TARGET
         ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
         task.wait(1)
     end
+    currentAction = "Collected " .. TARGET .. " packages, stopping generation"
 
     -- Stop generation once count is met
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
@@ -243,18 +261,18 @@ while true do
                 print("[GATE] Count dropped below 4! Restarting generation...")
                 currentAction = "Gate: count <4, restarting generation"
                 ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
-                -- continue loop to re-check
             elseif #frames > 4 then
                 print("[GATE] Overflow detected during gate. Rejecting one...")
-                currentAction = "Gate: rejecting overflow"
+                currentAction = "Gate: rejecting overflow (" .. #frames .. " packages)"
                 forceReject(frames[math.random(1, #frames)].Name)
                 currentAction = "Gate: awaiting dupe flag"
             else
                 -- Exactly 4, server confirmed. Start 60-second stabilization period.
                 print("[GATE] ✅ 4/4 confirmed. Starting 60-second overflow guard...")
-                currentAction = "Gate: 60s overflow guard active"
                 local startTime = tick()
                 while tick() - startTime < 60 do
+                    local remaining = 60 - math.floor(tick() - startTime)
+                    currentAction = "Gate: overflow guard (" .. remaining .. "s left)"
                     task.wait(0.5)
                     local currentFrames = {}
                     for _, v in ipairs(scrollingFrame:GetChildren()) do
@@ -264,7 +282,7 @@ while true do
                         print("[GATE] Overflow during guard! Rejecting...")
                         currentAction = "Gate: rejecting overflow in guard"
                         forceReject(currentFrames[math.random(1, #currentFrames)].Name)
-                        currentAction = "Gate: 60s overflow guard active"
+                        currentAction = "Gate: overflow guard (" .. remaining .. "s left)"
                     end
                 end
                 -- after 60 seconds with no overflow (or cleaned), exit
