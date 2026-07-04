@@ -24,6 +24,7 @@ local DUPE_FLAG   = false
 local CHECK_FLAG  = true
 local PACKAGE_GEMS = 2500000
 local TELEPORT    = CFrame.new(-460, 244, -67)
+local currentAction = "Idle"   -- <-- NEW: action log
 
 local blockedUsers = {}
 local failTimestamps = {}
@@ -35,10 +36,8 @@ local scrollingFrame = player:WaitForChild("PlayerGui"):WaitForChild("Lobby"):Wa
 local rejectId = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
 local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
--- 👇 NEW: Get the initialization remote identifier
+-- Init remote identifier
 local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba").Value
-
--- 👇 NEW: Flag to fire init remote only once
 local initFired = false
 
 -- ===================== REJECT SYSTEM =====================
@@ -46,6 +45,7 @@ local initFired = false
 -- Spam a single frame until it's verified gone from UI
 local function forceReject(frameName)
     print("[FORCE] Spaming reject for: " .. frameName)
+    currentAction = "Rejecting overflow: " .. frameName
     while true do
         local stillExists = false
         for _, v in ipairs(scrollingFrame:GetChildren()) do
@@ -58,6 +58,7 @@ local function forceReject(frameName)
         end)
         task.wait(0.05) 
     end
+    currentAction = "Idle"
 end
 
 -- Background logic for filtering fails and identifying @Unknown packages
@@ -82,16 +83,19 @@ local function processSmartFails()
         if from then sender = from.Text:gsub("@",""):lower() end
 
         if unresolved[sender] then
+            currentAction = "Rejecting failed sender: @" .. sender
             forceReject(frame.Name)
             blockedUsers[sender] = true
             failTimestamps[sender] = nil
             unresolved[sender] = nil
+            currentAction = "Idle"
         elseif sender:find("unknown") then
             local matched = false
             for _, d in ipairs(frame:GetDescendants()) do
                 if d:IsA("TextLabel") and d.Text then
                     for badUser, _ in pairs(unresolved) do
                         if d.Text:lower():find(badUser) then
+                            currentAction = "Rejecting unknown matching @" .. badUser
                             forceReject(frame.Name)
                             blockedUsers[badUser] = true
                             failTimestamps[badUser] = nil
@@ -105,19 +109,21 @@ local function processSmartFails()
         end
     end
 
-    -- 60s Fallback for Unresolved Fails: If a fail exists for >60s, toss any @Unknown
+    -- 60s Fallback for Unresolved Fails
     for badUser, start in pairs(failTimestamps) do
         if now - start > 60 and #unknownFrames > 0 then
             print("[FALLBACK] Rejecting unknown for " .. badUser)
+            currentAction = "Fallback reject for " .. badUser
             forceReject(unknownFrames[1].Name)
             blockedUsers[badUser] = true
             failTimestamps[badUser] = nil
             table.remove(unknownFrames, 1)
+            currentAction = "Idle"
         end
     end
 end
 
--- ===================== GUI (CoreGui + Centered) =====================
+-- ===================== GUI =====================
 
 local function createGui()
     local sg = Instance.new("ScreenGui", CoreGui)
@@ -126,8 +132,8 @@ local function createGui()
     sg.DisplayOrder = 999
 
     local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 280, 0, 100)
-    frame.Position = UDim2.new(0.5, -140, 0.5, -50)
+    frame.Size = UDim2.new(0, 320, 0, 130)  -- increased height for third line
+    frame.Position = UDim2.new(0.5, -160, 0.5, -65)
     frame.BackgroundColor3 = Color3.new(0, 0, 0)
     frame.BackgroundTransparency = 0.3
 
@@ -141,12 +147,12 @@ local function createGui()
 end
 local gui = createGui()
 
--- Continuous GUI Update
 task.spawn(function()
     while true do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
-        gui.Text = string.format("PKGS: %d / %d\nDUPE: %s\nCHECK: %s", count, TARGET, tostring(DUPE_FLAG), tostring(CHECK_FLAG))
+        gui.Text = string.format("PKGS: %d / %d\nDUPE: %s   CHECK: %s\nLOG: %s", 
+            count, TARGET, tostring(DUPE_FLAG), tostring(CHECK_FLAG), currentAction)
         task.wait(0.2)
     end
 end)
@@ -191,20 +197,23 @@ while true do
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if hrp then
         hrp.CFrame = TELEPORT
-        
-        -- 👇 NEW: Fire initialization remote once after first teleport
+
+        -- Fire init remote once after first teleport
         if not initFired then
             print("[INIT] Firing startup remote to ensure post office loads...")
+            currentAction = "Initializing post office"
             pcall(function()
                 remote:FireServer({ { initIdentifier } })
             end)
             initFired = true
+            currentAction = "Idle"
         end
     end
 
     if TARGET <= 0 then continue end
 
     -- Phase 1: Accumulation (Gather 4 units)
+    currentAction = "Waiting for 4 packages..."
     while true do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
@@ -217,32 +226,59 @@ while true do
     -- Stop generation once count is met
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
-    -- Phase 2: FINAL GATE (Only cleanup and complete when Server validates success)
+    -- Phase 2: FINAL GATE (Wait for server confirmation + overflow guard)
     print("[GATE] Waiting for DUPE_FLAG == true...")
+    currentAction = "Gate: awaiting dupe flag"
     while true do
-        if ws then ws:Send(HttpService:JSONEncode({type="get_data"})) end
-        
+        if ws then ws:Send(HttpService:JSONEncode({ type = "get_data" })) end
+        task.wait(1)
+
         if DUPE_FLAG == true then
             local frames = {}
-            for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then table.insert(frames, v) end end
-            
-            if #frames > 4 then
-                print("[GATE] Win confirmed. Cleaning excess to perfect 4...")
-                forceReject(frames[math.random(1, #frames)].Name)
-            elseif #frames < 4 then
-                print("[GATE] Count dropped! Restarting generation...")
+            for _, v in ipairs(scrollingFrame:GetChildren()) do
+                if v:IsA("Frame") then table.insert(frames, v) end
+            end
+
+            if #frames < 4 then
+                print("[GATE] Count dropped below 4! Restarting generation...")
+                currentAction = "Gate: count <4, restarting generation"
                 ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
+                -- continue loop to re-check
+            elseif #frames > 4 then
+                print("[GATE] Overflow detected during gate. Rejecting one...")
+                currentAction = "Gate: rejecting overflow"
+                forceReject(frames[math.random(1, #frames)].Name)
+                currentAction = "Gate: awaiting dupe flag"
             else
+                -- Exactly 4, server confirmed. Start 60-second stabilization period.
+                print("[GATE] ✅ 4/4 confirmed. Starting 60-second overflow guard...")
+                currentAction = "Gate: 60s overflow guard active"
+                local startTime = tick()
+                while tick() - startTime < 60 do
+                    task.wait(0.5)
+                    local currentFrames = {}
+                    for _, v in ipairs(scrollingFrame:GetChildren()) do
+                        if v:IsA("Frame") then table.insert(currentFrames, v) end
+                    end
+                    if #currentFrames > 4 then
+                        print("[GATE] Overflow during guard! Rejecting...")
+                        currentAction = "Gate: rejecting overflow in guard"
+                        forceReject(currentFrames[math.random(1, #currentFrames)].Name)
+                        currentAction = "Gate: 60s overflow guard active"
+                    end
+                end
+                -- after 60 seconds with no overflow (or cleaned), exit
                 break
             end
         end
-        task.wait(1)
     end
 
     -- Phase 4: Finalize & Next Account
     print("[GATE] 🛡️ VERIFIED: signaling complete.")
+    currentAction = "Signaling complete..."
     ws:Send(HttpService:JSONEncode({ type = "complete" }))
     task.wait(2)
+    currentAction = "Kicking to next account"
     player:Kick("Success - 4/4 Packages Verified")
     break
 end
