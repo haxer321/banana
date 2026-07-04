@@ -8,7 +8,7 @@ if not game:IsLoaded() then game.Loaded:Wait() end
 task.spawn(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))()
 end)
-
+game:GetService("RunService"):Set3dRenderingEnabled(false)
 local HttpService = game:GetService("HttpService")
 local Players     = game:GetService("Players")
 local player      = Players.LocalPlayer
