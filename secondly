@@ -117,7 +117,56 @@ local function forceReject(frameName)
     currentAction = "Idle"
 end
 
--- Background logic for filtering fails and identifying @Unknown packages
+-- ============================================================
+-- 🆕 IMPROVED USERNAME EXTRACTION – uses mention first, falls back to message parsing
+-- ============================================================
+local function extractUsernameFromFrame(frame)
+    -- Try to get username from the "From" label (mention)
+    local fromLabel = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
+    if fromLabel and fromLabel:IsA("TextLabel") then
+        local raw = fromLabel.Text
+        -- If it's not "Unknown" or "@Unknown", treat it as a valid username
+        if raw and raw ~= "Unknown" and raw ~= "@Unknown" and raw ~= "" then
+            local username = raw:gsub("^@", ""):lower()
+            if username ~= "" then
+                return username
+            end
+        end
+    end
+
+    -- If mention is missing or Unknown, try to parse the Package.Message
+    local messageLabel = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("Message")
+    if messageLabel and messageLabel:IsA("TextLabel") then
+        local msg = messageLabel.Text
+        if msg and msg ~= "" then
+            -- Typical format: "Time: HH:MM username"
+            -- Extract the last word after a space, assuming it's the username
+            -- Also handle "From: username" or similar
+            local words = {}
+            for word in msg:gmatch("%S+") do
+                table.insert(words, word)
+            end
+            if #words > 0 then
+                local last = words[#words]
+                -- Sometimes timestamp may be included, but the last token is usually the username
+                -- Additional check: if it looks like a time (contains ':'), skip and take previous?
+                if last:match("%d+:%d+") and #words >= 2 then
+                    last = words[#words - 1]
+                end
+                if last and last ~= "" then
+                    return last:lower()
+                end
+            end
+        end
+    end
+
+    -- Fallback: search all descendants for any unresolved username (handled outside)
+    return nil
+end
+
+-- ============================================================
+-- 🆕 PROCESS SMART FAILS – now uses extracted username for every frame
+-- ============================================================
 local function processSmartFails()
     if KILL or not FAILS or #FAILS == 0 then return end
     local now = os.clock()
@@ -131,50 +180,90 @@ local function processSmartFails()
         end
     end
 
-    local unknownFrames = {}
-    for _, frame in ipairs(scrollingFrame:GetChildren()) do
-        if not frame:IsA("Frame") then continue end
-        local sender = "unknown"
-        local from = frame:FindFirstChild("Package") and frame.Package:FindFirstChild("From")
-        if from then sender = from.Text:gsub("@",""):lower() end
+    if next(unresolved) == nil then return end  -- nothing to do
 
-        if unresolved[sender] then
-            currentAction = "Rejecting failed sender: @" .. sender
-            forceReject(frame.Name)
-            blockedUsers[sender] = true
-            failTimestamps[sender] = nil
-            unresolved[sender] = nil
-            currentAction = "Idle"
-        elseif sender:find("unknown") then
-            local matched = false
-            for _, d in ipairs(frame:GetDescendants()) do
-                if d:IsA("TextLabel") and d.Text then
-                    for badUser, _ in pairs(unresolved) do
-                        if d.Text:lower():find(badUser) then
-                            currentAction = "Rejecting unknown matching @" .. badUser
-                            forceReject(frame.Name)
-                            blockedUsers[badUser] = true
-                            failTimestamps[badUser] = nil
-                            matched = true; break
-                        end
-                    end
-                end
-                if matched then break end
-            end
-            if not matched then table.insert(unknownFrames, frame) end
+    local frames = {}
+    for _, frame in ipairs(scrollingFrame:GetChildren()) do
+        if frame:IsA("Frame") then
+            table.insert(frames, frame)
         end
     end
 
-    -- 60s Fallback for Unresolved Fails
-    for badUser, start in pairs(failTimestamps) do
-        if now - start > 60 and #unknownFrames > 0 then
-            print("[FALLBACK] Rejecting unknown for " .. badUser)
-            currentAction = "Fallback reject for " .. badUser
-            forceReject(unknownFrames[1].Name)
-            blockedUsers[badUser] = true
-            failTimestamps[badUser] = nil
-            table.remove(unknownFrames, 1)
-            currentAction = "Idle"
+    -- First pass: try to match using extracted username (mention or parsed message)
+    for _, frame in ipairs(frames) do
+        local username = extractUsernameFromFrame(frame)
+        if username and unresolved[username] then
+            currentAction = "Rejecting sender: @" .. username
+            forceReject(frame.Name)
+            blockedUsers[username] = true
+            failTimestamps[username] = nil
+            unresolved[username] = nil  -- remove from pending
+            -- break? We might want to reject one frame per user, but if multiple frames for same user, we reject only one.
+            -- Continue to next frame; we'll handle other users.
+        end
+    end
+
+    -- Second pass: if any unresolved remain, do a brute‑force text search in all descendants
+    -- (covers cases where our parsing failed or username appears elsewhere)
+    local stillUnresolved = {}
+    for user, _ in pairs(unresolved) do
+        if not blockedUsers[user] then
+            stillUnresolved[user] = true
+        end
+    end
+
+    if next(stillUnresolved) then
+        for _, frame in ipairs(frames) do
+            -- Search all text labels in the frame
+            local foundUser = nil
+            for _, desc in ipairs(frame:GetDescendants()) do
+                if desc:IsA("TextLabel") and desc.Text then
+                    local text = desc.Text:lower()
+                    for user, _ in pairs(stillUnresolved) do
+                        if text:find(user, 1, true) then
+                            foundUser = user
+                            break
+                        end
+                    end
+                end
+                if foundUser then break end
+            end
+            if foundUser then
+                currentAction = "Rejecting unknown matching @" .. foundUser
+                forceReject(frame.Name)
+                blockedUsers[foundUser] = true
+                failTimestamps[foundUser] = nil
+                stillUnresolved[foundUser] = nil
+                unresolved[foundUser] = nil
+                if next(stillUnresolved) == nil then break end
+            end
+        end
+    end
+
+    -- 60‑second fallback: if any unresolved fails remain, reject the first unknown frame
+    if next(unresolved) then
+        local oldestUser = nil
+        local oldestTime = math.huge
+        for user, time in pairs(failTimestamps) do
+            if unresolved[user] and time < oldestTime then
+                oldestTime = time
+                oldestUser = user
+            end
+        end
+        if oldestUser and (now - oldestTime > 60) then
+            -- Find any frame that doesn't have a known sender (or any frame) to reject
+            for _, frame in ipairs(frames) do
+                local username = extractUsernameFromFrame(frame)
+                if not username or not blockedUsers[username] then
+                    -- Reject this frame to clear the queue
+                    currentAction = "Fallback reject for " .. oldestUser
+                    forceReject(frame.Name)
+                    blockedUsers[oldestUser] = true
+                    failTimestamps[oldestUser] = nil
+                    unresolved[oldestUser] = nil
+                    break
+                end
+            end
         end
     end
 end
