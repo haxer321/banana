@@ -271,7 +271,7 @@ local function processSmartFails()
     end
 end
 
--- ===================== GUI with Debug Button =====================
+-- ===================== GUI with Debug + Reload Buttons =====================
 local function createGui()
     local sg = Instance.new("ScreenGui", CoreGui)
     sg.Name = "AutomatorUI"
@@ -279,8 +279,8 @@ local function createGui()
     sg.DisplayOrder = 999
 
     local mainFrame = Instance.new("Frame", sg)
-    mainFrame.Size = UDim2.new(0, 380, 0, 240)
-    mainFrame.Position = UDim2.new(0.5, -190, 0.5, -120)
+    mainFrame.Size = UDim2.new(0, 420, 0, 240)  -- wider for two buttons
+    mainFrame.Position = UDim2.new(0.5, -210, 0.5, -120)
     mainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
     mainFrame.BackgroundTransparency = 0.3
     local border = Instance.new("UICorner", mainFrame)
@@ -297,36 +297,77 @@ local function createGui()
     label.TextYAlignment = Enum.TextYAlignment.Top
     label.Text = "Loading..."
 
+    -- Dump button
     local debugBtn = Instance.new("TextButton", mainFrame)
     debugBtn.Size = UDim2.new(0, 80, 0, 30)
-    debugBtn.Position = UDim2.new(1, -90, 1, -40)
+    debugBtn.Position = UDim2.new(1, -180, 1, -40)
     debugBtn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
     debugBtn.TextColor3 = Color3.new(1, 1, 1)
     debugBtn.Text = "Dump"
     debugBtn.Font = Enum.Font.SourceSans
     debugBtn.TextScaled = true
-    local btnCorner = Instance.new("UICorner", debugBtn)
-    btnCorner.CornerRadius = UDim.new(0,4)
+    local btnCorner1 = Instance.new("UICorner", debugBtn)
+    btnCorner1.CornerRadius = UDim.new(0,4)
 
     debugBtn.MouseButton1Click:Connect(function()
-        print("===== PACKAGE DUMP (button) =====")
+        print("\n===== PACKAGE DUMP (button) =====")
         local count = 0
         for _, frame in ipairs(scrollingFrame:GetChildren()) do
             if frame:IsA("Frame") then
                 count = count + 1
                 local sender = getFrameSender(frame)
                 local msg = getFrameMessage(frame)
-                print(string.format("[%d] Frame: %s | Sender: '%s' | Message: '%s' | len(msg): %d",
-                    count, frame.Name, sender, msg, #msg))
+                local senderStripped = stripInvisible(sender)
+                local msgStripped = stripInvisible(msg)
+                local senderLower = (senderStripped or ""):gsub("@",""):lower()
+                if senderLower == "" then senderLower = "unknown" end
+                local msgTrimmed = msgStripped:gsub("%s+", "")
+                local corrupt = (senderLower == "unknown" and msgTrimmed == "")
+                
+                print(string.format(
+                    "[%d] Frame: %s\n" ..
+                    "    Sender raw: '%s' (len=%d)\n" ..
+                    "    Message raw: '%s' (len=%d)\n" ..
+                    "    Sender stripped: '%s' (len=%d)\n" ..
+                    "    Message stripped: '%s' (len=%d)\n" ..
+                    "    Corrupt? %s",
+                    count, frame.Name,
+                    sender, #sender,
+                    msg, #msg,
+                    senderStripped, #senderStripped,
+                    msgStripped, #msgStripped,
+                    tostring(corrupt)
+                ))
             end
         end
-        print("==================================")
+        print("FAILS list:", HttpService:JSONEncode(FAILS))
+        print("blockedUsers:", HttpService:JSONEncode(blockedUsers))
+        print("==================================\n")
     end)
 
-    return label, debugBtn
+    -- Reload button
+    local reloadBtn = Instance.new("TextButton", mainFrame)
+    reloadBtn.Size = UDim2.new(0, 80, 0, 30)
+    reloadBtn.Position = UDim2.new(1, -90, 1, -40)
+    reloadBtn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+    reloadBtn.TextColor3 = Color3.new(1, 1, 1)
+    reloadBtn.Text = "Reload"
+    reloadBtn.Font = Enum.Font.SourceSans
+    reloadBtn.TextScaled = true
+    local btnCorner2 = Instance.new("UICorner", reloadBtn)
+    btnCorner2.CornerRadius = UDim.new(0,4)
+
+    reloadBtn.MouseButton1Click:Connect(function()
+        print("[RELOAD] Reloading script from GitHub...")
+        KILL = true
+        task.wait(0.5)
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/haxer321/banana/refs/heads/main/secondly"))()
+    end)
+
+    return label, debugBtn, reloadBtn
 end
 
-local guiLabel, debugButton = createGui()
+local guiLabel, debugButton, reloadButton = createGui()
 
 task.spawn(function()
     while not KILL do
@@ -408,18 +449,39 @@ end)
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.K then
-        print("===== PACKAGE DUMP (K key) =====")
+        print("\n===== PACKAGE DUMP (K key) =====")
         local count = 0
         for _, frame in ipairs(scrollingFrame:GetChildren()) do
             if frame:IsA("Frame") then
                 count = count + 1
                 local sender = getFrameSender(frame)
                 local msg = getFrameMessage(frame)
-                print(string.format("[%d] Frame: %s | Sender: '%s' | Message: '%s' | len(msg): %d",
-                    count, frame.Name, sender, msg, #msg))
+                local senderStripped = stripInvisible(sender)
+                local msgStripped = stripInvisible(msg)
+                local senderLower = (senderStripped or ""):gsub("@",""):lower()
+                if senderLower == "" then senderLower = "unknown" end
+                local msgTrimmed = msgStripped:gsub("%s+", "")
+                local corrupt = (senderLower == "unknown" and msgTrimmed == "")
+                
+                print(string.format(
+                    "[%d] Frame: %s\n" ..
+                    "    Sender raw: '%s' (len=%d)\n" ..
+                    "    Message raw: '%s' (len=%d)\n" ..
+                    "    Sender stripped: '%s' (len=%d)\n" ..
+                    "    Message stripped: '%s' (len=%d)\n" ..
+                    "    Corrupt? %s",
+                    count, frame.Name,
+                    sender, #sender,
+                    msg, #msg,
+                    senderStripped, #senderStripped,
+                    msgStripped, #msgStripped,
+                    tostring(corrupt)
+                ))
             end
         end
-        print("=================================")
+        print("FAILS list:", HttpService:JSONEncode(FAILS))
+        print("blockedUsers:", HttpService:JSONEncode(blockedUsers))
+        print("==================================\n")
     end
 end)
 
