@@ -1,173 +1,3 @@
--- =============================================
--- 📡 ANDROID AUTOMATOR — DYNAMIC LOG + SEPARATE FLAGS
--- =============================================
-
-if not game:IsLoaded() then game.Loaded:Wait() end
-
--- Anti-AFK Background Task
-task.spawn(function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))()
-end)
-
-local HttpService = game:GetService("HttpService")
-local Players     = game:GetService("Players")
-local RunService  = game:GetService("RunService")
-local CoreGui     = game:GetService("CoreGui")
-local GuiService  = game:GetService("GuiService")
-local TeleportService = game:GetService("TeleportService")
-local player      = Players.LocalPlayer
-local WS_URL      = "ws://localhost:8080"
-local ws          = nil
-
--- STATE
-local TARGET      = 4
-local FAILS       = {}
-local DUPE_FLAG   = false
-local CHECK_FLAG  = true
-local FAILS_COUNT = 0
-local PACKAGE_GEMS = 2500000
-local TELEPORT    = CFrame.new(-460, 244, -67)
-local currentAction = "Idle"
-
-local blockedUsers = {}
-local failTimestamps = {}
-
--- =============================================
--- ⚡ UNEXPECTED KILL SWITCH — only triggers on errors/unexpected kicks
--- =============================================
-local KILL = false
-local INTENTIONAL_KICK = false  -- Set to true when we intentionally kick
-
-local function killEverythingAndRejoin()
-    if KILL then return end
-    KILL = true
-    print("[KILL] ⚠️ UNEXPECTED kick/error detected! Stopping heartbeats and rejoining...")
-    currentAction = "KILL: Unexpected kick - rejoining..."
-    
-    -- Close WebSocket cleanly - this stops the heartbeat
-    if ws then
-        pcall(function()
-            ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
-            ws:Close()
-        end)
-        ws = nil
-    end
-    
-    task.wait(1)
-    
-    -- Attempt to rejoin
-    pcall(function()
-        TeleportService:Teleport(game.PlaceId, player)
-    end)
-    
-    -- If Teleport fails, kick as fallback (but the server will see no heartbeat)
-    task.wait(2)
-    if not KILL then
-        player:Kick("Unexpected error - rejoin attempted")
-    end
-end
-
--- Error handler - triggers unexpected kill
-local function onErrorMessageChanged(errorMessage)
-    if errorMessage and errorMessage ~= "" and not KILL and not INTENTIONAL_KICK then
-        print("[ERROR] Unexpected error: " .. errorMessage)
-        killEverythingAndRejoin()
-    end
-end
-GuiService.ErrorMessageChanged:Connect(onErrorMessageChanged)
-
--- Player removing handler - triggers unexpected kill
-Players.PlayerRemoving:Connect(function(p)
-    if p == player and not KILL and not INTENTIONAL_KICK then
-        killEverythingAndRejoin()
-    end
-end)
-
--- =============================================
--- ELEMENTS
--- =============================================
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
-local scrollingFrame = player:WaitForChild("PlayerGui"):WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus"):WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
-local rejectId = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
-local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
-
--- Init remote identifier
-local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba").Value
-local initFired = false
-
--- ===================== REJECT SYSTEM =====================
-
-local function forceReject(frameName)
-    if KILL then return end
-    print("[FORCE] Spaming reject for: " .. frameName)
-    currentAction = "Rejecting overflow: " .. frameName
-    while not KILL do
-        local stillExists = false
-        for _, v in ipairs(scrollingFrame:GetChildren()) do
-            if v.Name == frameName then stillExists = true break end
-        end
-        if not stillExists then break end
-        
-        pcall(function()
-            remote:FireServer({ {rejectId, rejectStr, frameName} })
-        end)
-        task.wait(0.05) 
-    end
-    currentAction = "Idle"
-end
-
--- ===================== NAME EXTRACTION =====================
-local function getFrameSender(frame)
-    if not frame or not frame:IsA("Frame") then return "unknown" end
-
-    local pkg = frame:FindFirstChild("Package")
-    if not pkg then return "unknown" end
-
-    local from = pkg:FindFirstChild("From")
-    if from and from:IsA("TextLabel") and from.Text and from.Text ~= "" then
-        local txt = from.Text:gsub("@",""):lower()
-        if txt ~= "" and txt ~= "unknown" then
-            return txt
-        end
-    end
-
-    local msg = pkg:FindFirstChild("Message")
-    if msg and msg:IsA("TextLabel") and msg.Text and msg.Text ~= "" then
-        return msg.Text
-    end
-
-    for _, d in ipairs(pkg:GetDescendants()) do
-        if d:IsA("TextLabel") and d.Text and d.Text ~= "" then
-            return d.Text
-        end
-    end
-
-    return "unknown"
-end
-
-local function getFrameMessage(frame)
-    local pkg = frame:FindFirstChild("Package")
-    if not pkg then return "" end
-    local msg = pkg:FindFirstChild("Message")
-    if msg and msg:IsA("TextLabel") then
-        return msg.Text or ""
-    end
-    return ""
-end
-
-local function findFailsInText(text, unresolved)
-    if not text then return nil end
-    local lowered = text:lower()
-    for badUser, _ in pairs(unresolved) do
-        if badUser and badUser ~= "" and lowered:find(badUser, 1, true) then
-            return badUser
-        end
-    end
-    return nil
-end
-
--- ===================== SMART FAIL PROCESSING =====================
 local function processSmartFails()
     if KILL or not FAILS or #FAILS == 0 then return end
     local now = os.clock()
@@ -192,7 +22,7 @@ local function processSmartFails()
         local senderLower = (sender or "unknown"):gsub("@",""):lower()
         local messageTrimmed = message:gsub("%s+", "")
 
-        -- CORRUPT PACKAGE DETECTION: @Unknown + empty/whitespace message
+        -- 1) CORRUPT PACKAGE: @Unknown with empty message
         if senderLower == "unknown" and messageTrimmed == "" then
             print("[CORRUPT] Rejected corrupt package from @Unknown with empty message")
             currentAction = "Rejecting corrupt @Unknown with empty message"
@@ -201,6 +31,7 @@ local function processSmartFails()
             continue
         end
 
+        -- 2) DIRECT SENDER MATCH
         if unresolved[senderLower] then
             currentAction = "Rejecting failed sender: @" .. senderLower
             forceReject(frame.Name)
@@ -208,18 +39,39 @@ local function processSmartFails()
             failTimestamps[senderLower] = nil
             unresolved[senderLower] = nil
             currentAction = "Idle"
-        else
-            local matched = findFailsInText(sender, unresolved)
-            if matched then
-                currentAction = "Rejecting via message scan: @" .. matched
+            continue
+        end
+
+        -- 3) SENDER TEXT CONTAINS FAIL NAME (original fallback)
+        local matched = findFailsInText(sender, unresolved)
+        if matched then
+            currentAction = "Rejecting via sender scan: @" .. matched
+            forceReject(frame.Name)
+            blockedUsers[matched] = true
+            failTimestamps[matched] = nil
+            unresolved[matched] = nil
+            currentAction = "Idle"
+            continue
+        end
+
+        -- 4) **NEW**: @Unknown sender BUT message contains a fail name
+        if senderLower == "unknown" then
+            local matchedMsg = findFailsInText(message, unresolved)
+            if matchedMsg then
+                print("[MSG] Rejecting @Unknown package whose message contains fail: " .. matchedMsg)
+                currentAction = "Rejecting via message scan (Unknown sender): @" .. matchedMsg
                 forceReject(frame.Name)
-                blockedUsers[matched] = true
-                failTimestamps[matched] = nil
-                unresolved[matched] = nil
+                blockedUsers[matchedMsg] = true
+                failTimestamps[matchedMsg] = nil
+                unresolved[matchedMsg] = nil
                 currentAction = "Idle"
-            elseif senderLower:find("unknown") then
-                table.insert(unknownFrames, frame)
+                continue
             end
+        end
+
+        -- 5) Otherwise, if sender contains "unknown", add to fallback list
+        if senderLower:find("unknown") then
+            table.insert(unknownFrames, frame)
         end
     end
 
@@ -235,200 +87,4 @@ local function processSmartFails()
             currentAction = "Idle"
         end
     end
-end
-
--- ===================== GUI =====================
-local function createGui()
-    local sg = Instance.new("ScreenGui", CoreGui)
-    sg.Name = "AutomatorUI"
-    sg.ResetOnSpawn = false
-    sg.DisplayOrder = 999
-
-    local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 340, 0, 200)
-    frame.Position = UDim2.new(0.5, -170, 0.5, -100)
-    frame.BackgroundColor3 = Color3.new(0, 0, 0)
-    frame.BackgroundTransparency = 0.3
-    local border = Instance.new("UICorner", frame)
-    border.CornerRadius = UDim.new(0,6)
-
-    local label = Instance.new("TextLabel", frame)
-    label.Size = UDim2.new(1, -10, 1, -10)
-    label.Position = UDim2.new(0,5,0,5)
-    label.TextColor3 = Color3.new(0, 1, 0)
-    label.TextScaled = true
-    label.Font = Enum.Font.RobotoMono
-    label.BackgroundTransparency = 1
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.TextYAlignment = Enum.TextYAlignment.Top
-    return label
-end
-local gui = createGui()
-
-task.spawn(function()
-    while not KILL do
-        local count = 0
-        for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
-        local fc = #FAILS
-        gui.Text = string.format(
-            "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s",
-            count, TARGET,
-            tostring(DUPE_FLAG),
-            tostring(CHECK_FLAG),
-            fc,
-            currentAction
-        )
-        task.wait(0.2)
-    end
-end)
-
--- ===================== WS HANDLERS =====================
-local function connectWS()
-    local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
-    if not ok or not socket then task.wait(5); return connectWS() end
-    ws = socket
-    ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
-    ws.OnMessage:Connect(function(msg)
-        local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
-        if ok2 and data.type == "data_update" then
-            TARGET = 4
-            FAILS = data.Fails or data.fails or {}
-            if data.Dupe == true and not DUPE_FLAG then blockedUsers = {}; failTimestamps = {} end
-            DUPE_FLAG = (data.Dupe == true)
-            CHECK_FLAG = (data.Check == true)
-        end
-    end)
-    ws.OnClose:Connect(function() 
-        if not KILL then
-            task.wait(2)
-            connectWS()
-        end
-    end)
-end
-
--- Heartbeat Loop
-task.spawn(function()
-    while not KILL do
-        if ws then 
-            pcall(function() 
-                ws:Send(HttpService:JSONEncode({type="heartbeat",user=player.Name})) 
-                ws:Send(HttpService:JSONEncode({type="get_data"})) 
-            end) 
-        end
-        task.wait(10)
-    end
-end)
-
--- Constant background rejection thread
-task.spawn(function() 
-    while not KILL do 
-        processSmartFails() 
-        task.wait(2) 
-    end 
-end)
-
--- =============================================
--- MAIN LOOP
--- =============================================
-RunService:Set3dRenderingEnabled(false)
-connectWS()
-
-while not KILL do
-    task.wait(2)
-    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        hrp.CFrame = TELEPORT
-
-        if not initFired then
-            print("[INIT] Firing startup remote to ensure post office loads...")
-            currentAction = "Initializing post office"
-            pcall(function()
-                remote:FireServer({ { initIdentifier } })
-            end)
-            initFired = true
-            currentAction = "Idle"
-        end
-    end
-
-    if TARGET <= 0 then continue end
-
-    -- Phase 1: Accumulation
-    currentAction = "Collecting packages: 0/" .. TARGET
-    while not KILL do
-        local count = 0
-        for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
-        if count >= TARGET then break end
-        
-        currentAction = "Collecting packages: " .. count .. "/" .. TARGET
-        ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
-        task.wait(1)
-    end
-    currentAction = "Collected " .. TARGET .. " packages, stopping generation"
-    ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
-
-    -- Phase 2: FINAL GATE
-    print("[GATE] Waiting for DUPE_FLAG == true...")
-    currentAction = "Gate: awaiting dupe flag"
-    while not KILL do
-        if ws then ws:Send(HttpService:JSONEncode({ type = "get_data" })) end
-        task.wait(1)
-
-        if DUPE_FLAG == true then
-            local frames = {}
-            for _, v in ipairs(scrollingFrame:GetChildren()) do
-                if v:IsA("Frame") then table.insert(frames, v) end
-            end
-
-            if #frames < 4 then
-                print("[GATE] Count dropped below 4! Restarting generation...")
-                currentAction = "Gate: count <4, restarting generation"
-                ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
-            elseif #frames > 4 then
-                print("[GATE] Overflow detected during gate. Rejecting one...")
-                currentAction = "Gate: rejecting overflow (" .. #frames .. " packages)"
-                forceReject(frames[math.random(1, #frames)].Name)
-                currentAction = "Gate: awaiting dupe flag"
-            else
-                print("[GATE] ✅ 4/4 confirmed. Starting 60-second overflow guard...")
-                local startTime = tick()
-                while tick() - startTime < 60 and not KILL do
-                    local remaining = 60 - math.floor(tick() - startTime)
-                    currentAction = "Gate: overflow guard (" .. remaining .. "s left)"
-                    task.wait(0.5)
-                    local currentFrames = {}
-                    for _, v in ipairs(scrollingFrame:GetChildren()) do
-                        if v:IsA("Frame") then table.insert(currentFrames, v) end
-                    end
-                    if #currentFrames > 4 then
-                        print("[GATE] Overflow during guard! Rejecting...")
-                        currentAction = "Gate: rejecting overflow in guard"
-                        forceReject(currentFrames[math.random(1, #currentFrames)].Name)
-                        currentAction = "Gate: overflow guard (" .. remaining .. "s left)"
-                    end
-                end
-                break
-            end
-        end
-    end
-
-    -- Phase 3: Finalize & Next Account
-    print("[GATE] 🛡️ VERIFIED: signaling complete.")
-    currentAction = "Signaling complete..."
-    ws:Send(HttpService:JSONEncode({ type = "complete" }))
-    task.wait(2)
-    
-    currentAction = "✅ Intentional completion - kicking"
-    INTENTIONAL_KICK = true
-    
-    if ws then
-        pcall(function()
-            ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
-            ws:Close()
-        end)
-        ws = nil
-    end
-    
-    task.wait(1)
-    player:Kick("✅ Success - 4/4 Packages Verified")
-    break
 end
