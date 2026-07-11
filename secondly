@@ -159,7 +159,7 @@ local function findFailsInText(text, unresolved)
     return nil
 end
 
--- ===================== SMART FAIL PROCESSING =====================
+-- ===================== SMART FAIL PROCESSING (FIXED) =====================
 local function processSmartFails()
     if KILL or not FAILS or #FAILS == 0 then return end
     local now = os.clock()
@@ -181,22 +181,27 @@ local function processSmartFails()
 
         local sender = getFrameSender(frame)
         local message = getFrameMessage(frame)
-        local senderLower = (sender or "unknown"):gsub("@",""):lower()
+        local senderLower = (sender or ""):gsub("@",""):lower()
         local msgTrimmed = (message or ""):gsub("%s+", "")
 
-        -- CORRUPT PACKAGE DETECTION (robust)
+        -- Normalise: treat empty sender as "unknown"
+        if senderLower == "" then senderLower = "unknown" end
+
+        -- ========== CORRUPT PACKAGE DETECTION (ROBUST) ==========
         if senderLower == "unknown" then
+            -- Case 1: message is empty or whitespace-only
             if msgTrimmed == "" then
-                print("[CORRUPT] Rejected @Unknown with empty/whitespace message")
-                currentAction = "Rejecting corrupt @Unknown (empty msg)"
+                print("[CORRUPT] Rejected @Unknown/empty sender with empty/whitespace message")
+                currentAction = "Rejecting corrupt package (empty sender + empty msg)"
                 forceReject(frame.Name)
                 currentAction = "Idle"
                 continue
             end
 
+            -- Case 2: message contains a failed user's name
             local matched = findFailsInText(message, unresolved)
             if matched then
-                print("[CORRUPT] Rejected @Unknown containing failed user: " .. matched)
+                print("[CORRUPT] Rejected @Unknown/empty sender containing failed user: " .. matched)
                 currentAction = "Rejecting @Unknown containing: " .. matched
                 forceReject(frame.Name)
                 blockedUsers[matched] = true
@@ -207,7 +212,7 @@ local function processSmartFails()
             end
         end
 
-        -- NORMAL REJECTION
+        -- ========== NORMAL REJECTION LOGIC ==========
         if unresolved[senderLower] then
             currentAction = "Rejecting failed sender: @" .. senderLower
             forceReject(frame.Name)
@@ -230,7 +235,7 @@ local function processSmartFails()
         end
     end
 
-    -- 60s Fallback
+    -- 60s Fallback for Unresolved Fails
     for badUser, start in pairs(failTimestamps) do
         if now - start > 60 and #unknownFrames > 0 then
             print("[FALLBACK] Rejecting unknown for " .. badUser)
@@ -259,7 +264,6 @@ local function createGui()
     local border = Instance.new("UICorner", mainFrame)
     border.CornerRadius = UDim.new(0,6)
 
-    -- Status label
     local label = Instance.new("TextLabel", mainFrame)
     label.Size = UDim2.new(1, -10, 1, -50)
     label.Position = UDim2.new(0,5,0,5)
@@ -271,7 +275,6 @@ local function createGui()
     label.TextYAlignment = Enum.TextYAlignment.Top
     label.Text = "Loading..."
 
-    -- Debug button
     local debugBtn = Instance.new("TextButton", mainFrame)
     debugBtn.Size = UDim2.new(0, 80, 0, 30)
     debugBtn.Position = UDim2.new(1, -90, 1, -40)
@@ -291,7 +294,7 @@ local function createGui()
                 count = count + 1
                 local sender = getFrameSender(frame)
                 local msg = getFrameMessage(frame)
-                print(string.format("[%d] Frame: %s | Sender: %s | Message: '%s' | len: %d",
+                print(string.format("[%d] Frame: %s | Sender: '%s' | Message: '%s' | len(msg): %d",
                     count, frame.Name, sender, msg, #msg))
             end
         end
@@ -378,7 +381,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
                 count = count + 1
                 local sender = getFrameSender(frame)
                 local msg = getFrameMessage(frame)
-                print(string.format("[%d] Frame: %s | Sender: %s | Message: '%s' | len: %d",
+                print(string.format("[%d] Frame: %s | Sender: '%s' | Message: '%s' | len(msg): %d",
                     count, frame.Name, sender, msg, #msg))
             end
         end
