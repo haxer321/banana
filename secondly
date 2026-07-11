@@ -172,7 +172,32 @@ local function stripInvisible(str)
     return table.concat(filtered)
 end
 
--- ===================== SMART FAIL PROCESSING (FIXED) =====================
+-- ===================== CORRUPT PACKAGE DETECTOR (runs independently) =====================
+local function checkCorruptPackages()
+    if KILL then return end
+    for _, frame in ipairs(scrollingFrame:GetChildren()) do
+        if not frame:IsA("Frame") then continue end
+        
+        local sender = getFrameSender(frame)
+        local message = getFrameMessage(frame)
+        
+        local senderStripped = stripInvisible(sender)
+        local msgStripped = stripInvisible(message)
+        local senderLower = (senderStripped or ""):gsub("@",""):lower()
+        if senderLower == "" then senderLower = "unknown" end
+        local msgTrimmed = msgStripped:gsub("%s+", "")
+        
+        -- Corrupt if sender effectively empty and message empty/whitespace
+        if senderLower == "unknown" and msgTrimmed == "" then
+            print("[CORRUPT] Rejected corrupt package (empty sender + empty message)")
+            currentAction = "Rejecting corrupt package (empty/invisible)"
+            forceReject(frame.Name)
+            currentAction = "Idle"
+        end
+    end
+end
+
+-- ===================== SMART FAIL PROCESSING (handles FAILS) =====================
 local function processSmartFails()
     if KILL or not FAILS or #FAILS == 0 then return end
     local now = os.clock()
@@ -195,38 +220,18 @@ local function processSmartFails()
         local sender = getFrameSender(frame)
         local message = getFrameMessage(frame)
         
-        -- Strip invisible characters to detect true emptiness
         local senderStripped = stripInvisible(sender)
         local msgStripped = stripInvisible(message)
-        
         local senderLower = (senderStripped or ""):gsub("@",""):lower()
         if senderLower == "" then senderLower = "unknown" end
-        
-        local msgTrimmed = msgStripped:gsub("%s+", "")  -- remove whitespace after stripping invisibles
+        local msgTrimmed = msgStripped:gsub("%s+", "")
 
-        -- ========== CORRUPT PACKAGE DETECTION (ROBUST) ==========
-        if senderLower == "unknown" then
-            -- Case 1: message is effectively empty (only invisible/whitespace)
-            if msgTrimmed == "" then
-                print("[CORRUPT] Rejected @Unknown/empty sender with empty/whitespace/invisible message")
-                currentAction = "Rejecting corrupt package (empty sender + empty msg)"
-                forceReject(frame.Name)
-                currentAction = "Idle"
-                continue
-            end
-
-            -- Case 2: message contains a failed user's name
-            local matched = findFailsInText(message, unresolved)  -- still check raw to catch names with invisibles
-            if matched then
-                print("[CORRUPT] Rejected @Unknown/empty sender containing failed user: " .. matched)
-                currentAction = "Rejecting @Unknown containing: " .. matched
-                forceReject(frame.Name)
-                blockedUsers[matched] = true
-                failTimestamps[matched] = nil
-                unresolved[matched] = nil
-                currentAction = "Idle"
-                continue
-            end
+        -- ========== CORRUPT PACKAGE DETECTION (already handled by separate loop) ==========
+        -- but we still keep it here for redundancy
+        if senderLower == "unknown" and msgTrimmed == "" then
+            print("[CORRUPT] Rejected corrupt package (empty sender + empty message) - redundant")
+            forceReject(frame.Name)
+            continue
         end
 
         -- ========== NORMAL REJECTION LOGIC ==========
@@ -377,7 +382,19 @@ task.spawn(function()
     end
 end)
 
--- Constant background rejection thread
+-- =============================================
+-- BACKGROUND THREADS
+-- =============================================
+
+-- Corrupt package detector (runs every 0.5s, independent of FAILS)
+task.spawn(function()
+    while not KILL do
+        checkCorruptPackages()
+        task.wait(0.5)
+    end
+end)
+
+-- Smart fail processor (runs every 2s, only active when FAILS exists)
 task.spawn(function() 
     while not KILL do 
         processSmartFails() 
