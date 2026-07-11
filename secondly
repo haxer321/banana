@@ -15,7 +15,7 @@ local RunService  = game:GetService("RunService")
 local CoreGui     = game:GetService("CoreGui")
 local GuiService  = game:GetService("GuiService")
 local TeleportService = game:GetService("TeleportService")
-local UserInputService = game:GetService("UserInputService")  -- For K-key debug
+local UserInputService = game:GetService("UserInputService")
 local player      = Players.LocalPlayer
 local WS_URL      = "ws://localhost:8080"
 local ws          = nil
@@ -34,10 +34,10 @@ local blockedUsers = {}
 local failTimestamps = {}
 
 -- =============================================
--- ⚡ UNEXPECTED KILL SWITCH — only triggers on errors/unexpected kicks
+-- ⚡ UNEXPECTED KILL SWITCH
 -- =============================================
 local KILL = false
-local INTENTIONAL_KICK = false  -- Set to true when we intentionally kick
+local INTENTIONAL_KICK = false
 
 local function killEverythingAndRejoin()
     if KILL then return end
@@ -45,7 +45,6 @@ local function killEverythingAndRejoin()
     print("[KILL] ⚠️ UNEXPECTED kick/error detected! Stopping heartbeats and rejoining...")
     currentAction = "KILL: Unexpected kick - rejoining..."
     
-    -- Close WebSocket cleanly - this stops the heartbeat
     if ws then
         pcall(function()
             ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
@@ -55,20 +54,15 @@ local function killEverythingAndRejoin()
     end
     
     task.wait(1)
-    
-    -- Attempt to rejoin
     pcall(function()
         TeleportService:Teleport(game.PlaceId, player)
     end)
-    
-    -- If Teleport fails, kick as fallback (but the server will see no heartbeat)
     task.wait(2)
     if not KILL then
         player:Kick("Unexpected error - rejoin attempted")
     end
 end
 
--- Error handler - triggers unexpected kill
 local function onErrorMessageChanged(errorMessage)
     if errorMessage and errorMessage ~= "" and not KILL and not INTENTIONAL_KICK then
         print("[ERROR] Unexpected error: " .. errorMessage)
@@ -77,7 +71,6 @@ local function onErrorMessageChanged(errorMessage)
 end
 GuiService.ErrorMessageChanged:Connect(onErrorMessageChanged)
 
--- Player removing handler - triggers unexpected kill
 Players.PlayerRemoving:Connect(function(p)
     if p == player and not KILL and not INTENTIONAL_KICK then
         killEverythingAndRejoin()
@@ -93,12 +86,10 @@ local scrollingFrame = player:WaitForChild("PlayerGui"):WaitForChild("Lobby"):Wa
 local rejectId = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
 local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
--- Init remote identifier
 local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba").Value
 local initFired = false
 
 -- ===================== REJECT SYSTEM =====================
-
 local function forceReject(frameName)
     if KILL then return end
     print("[FORCE] Spaming reject for: " .. frameName)
@@ -168,7 +159,7 @@ local function findFailsInText(text, unresolved)
     return nil
 end
 
--- ===================== SMART FAIL PROCESSING (UPDATED) =====================
+-- ===================== SMART FAIL PROCESSING =====================
 local function processSmartFails()
     if KILL or not FAILS or #FAILS == 0 then return end
     local now = os.clock()
@@ -191,11 +182,10 @@ local function processSmartFails()
         local sender = getFrameSender(frame)
         local message = getFrameMessage(frame)
         local senderLower = (sender or "unknown"):gsub("@",""):lower()
-        local msgTrimmed = (message or ""):gsub("%s+", "")  -- removes all whitespace
+        local msgTrimmed = (message or ""):gsub("%s+", "")
 
-        -- ========== CORRUPT PACKAGE DETECTION (ROBUST) ==========
+        -- CORRUPT PACKAGE DETECTION (robust)
         if senderLower == "unknown" then
-            -- Case 1: empty or whitespace-only message
             if msgTrimmed == "" then
                 print("[CORRUPT] Rejected @Unknown with empty/whitespace message")
                 currentAction = "Rejecting corrupt @Unknown (empty msg)"
@@ -204,7 +194,6 @@ local function processSmartFails()
                 continue
             end
 
-            -- Case 2: message contains a failed user's name
             local matched = findFailsInText(message, unresolved)
             if matched then
                 print("[CORRUPT] Rejected @Unknown containing failed user: " .. matched)
@@ -218,7 +207,7 @@ local function processSmartFails()
             end
         end
 
-        -- ========== NORMAL REJECTION LOGIC ==========
+        -- NORMAL REJECTION
         if unresolved[senderLower] then
             currentAction = "Rejecting failed sender: @" .. senderLower
             forceReject(frame.Name)
@@ -241,7 +230,7 @@ local function processSmartFails()
         end
     end
 
-    -- 60s Fallback for Unresolved Fails
+    -- 60s Fallback
     for badUser, start in pairs(failTimestamps) do
         if now - start > 60 and #unknownFrames > 0 then
             print("[FALLBACK] Rejecting unknown for " .. badUser)
@@ -255,23 +244,24 @@ local function processSmartFails()
     end
 end
 
--- ===================== GUI =====================
+-- ===================== GUI with Debug Button =====================
 local function createGui()
     local sg = Instance.new("ScreenGui", CoreGui)
     sg.Name = "AutomatorUI"
     sg.ResetOnSpawn = false
     sg.DisplayOrder = 999
 
-    local frame = Instance.new("Frame", sg)
-    frame.Size = UDim2.new(0, 340, 0, 200)
-    frame.Position = UDim2.new(0.5, -170, 0.5, -100)
-    frame.BackgroundColor3 = Color3.new(0, 0, 0)
-    frame.BackgroundTransparency = 0.3
-    local border = Instance.new("UICorner", frame)
+    local mainFrame = Instance.new("Frame", sg)
+    mainFrame.Size = UDim2.new(0, 380, 0, 240)
+    mainFrame.Position = UDim2.new(0.5, -190, 0.5, -120)
+    mainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
+    mainFrame.BackgroundTransparency = 0.3
+    local border = Instance.new("UICorner", mainFrame)
     border.CornerRadius = UDim.new(0,6)
 
-    local label = Instance.new("TextLabel", frame)
-    label.Size = UDim2.new(1, -10, 1, -10)
+    -- Status label
+    local label = Instance.new("TextLabel", mainFrame)
+    label.Size = UDim2.new(1, -10, 1, -50)
     label.Position = UDim2.new(0,5,0,5)
     label.TextColor3 = Color3.new(0, 1, 0)
     label.TextScaled = true
@@ -279,16 +269,46 @@ local function createGui()
     label.BackgroundTransparency = 1
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.TextYAlignment = Enum.TextYAlignment.Top
-    return label
+    label.Text = "Loading..."
+
+    -- Debug button
+    local debugBtn = Instance.new("TextButton", mainFrame)
+    debugBtn.Size = UDim2.new(0, 80, 0, 30)
+    debugBtn.Position = UDim2.new(1, -90, 1, -40)
+    debugBtn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+    debugBtn.TextColor3 = Color3.new(1, 1, 1)
+    debugBtn.Text = "Dump"
+    debugBtn.Font = Enum.Font.SourceSans
+    debugBtn.TextScaled = true
+    local btnCorner = Instance.new("UICorner", debugBtn)
+    btnCorner.CornerRadius = UDim.new(0,4)
+
+    debugBtn.MouseButton1Click:Connect(function()
+        print("===== PACKAGE DUMP (button) =====")
+        local count = 0
+        for _, frame in ipairs(scrollingFrame:GetChildren()) do
+            if frame:IsA("Frame") then
+                count = count + 1
+                local sender = getFrameSender(frame)
+                local msg = getFrameMessage(frame)
+                print(string.format("[%d] Frame: %s | Sender: %s | Message: '%s' | len: %d",
+                    count, frame.Name, sender, msg, #msg))
+            end
+        end
+        print("==================================")
+    end)
+
+    return label, debugBtn
 end
-local gui = createGui()
+
+local guiLabel, debugButton = createGui()
 
 task.spawn(function()
     while not KILL do
         local count = 0
         for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
         local fc = #FAILS
-        gui.Text = string.format(
+        guiLabel.Text = string.format(
             "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s",
             count, TARGET,
             tostring(DUPE_FLAG),
@@ -346,23 +366,23 @@ task.spawn(function()
 end)
 
 -- =============================================
--- K‑KEY DEBUG DUMP (Press K to see package details)
+-- K‑KEY DEBUG (still available for keyboards)
 -- =============================================
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.K then
-        print("===== PACKAGE DUMP =====")
+        print("===== PACKAGE DUMP (K key) =====")
         local count = 0
         for _, frame in ipairs(scrollingFrame:GetChildren()) do
             if frame:IsA("Frame") then
                 count = count + 1
                 local sender = getFrameSender(frame)
                 local msg = getFrameMessage(frame)
-                print(string.format("[%d] Frame: %s | Sender: %s | Message: '%s' | len: %d", 
+                print(string.format("[%d] Frame: %s | Sender: %s | Message: '%s' | len: %d",
                     count, frame.Name, sender, msg, #msg))
             end
         end
-        print("========================")
+        print("=================================")
     end
 end)
 
