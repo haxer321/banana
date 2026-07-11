@@ -190,12 +190,9 @@ local function checkCorruptPackages()
         local senderStripped = stripInvisible(sender)
         local msgStripped = stripInvisible(message)
         local senderLower = (senderStripped or ""):gsub("@",""):lower()
-        -- If sender has no alphanumeric, treat as "unknown"
         if not hasAlnum(senderLower) then senderLower = "unknown" end
-        -- If message has no alphanumeric, treat as empty
         local msgHasAlnum = hasAlnum(msgStripped)
         
-        -- Corrupt if sender is effectively unknown AND message has no meaningful content
         if senderLower == "unknown" and not msgHasAlnum then
             print("[CORRUPT] Rejected corrupt package (sender has no alnum, message has no alnum)")
             currentAction = "Rejecting corrupt package (no alnum)"
@@ -205,7 +202,7 @@ local function checkCorruptPackages()
     end
 end
 
--- ===================== SMART FAIL PROCESSING (handles FAILS) =====================
+-- ===================== SMART FAIL PROCESSING =====================
 local function processSmartFails()
     if KILL or not FAILS or #FAILS == 0 then return end
     local now = os.clock()
@@ -234,14 +231,12 @@ local function processSmartFails()
         if not hasAlnum(senderLower) then senderLower = "unknown" end
         local msgHasAlnum = hasAlnum(msgStripped)
 
-        -- ========== CORRUPT PACKAGE DETECTION (redundant) ==========
         if senderLower == "unknown" and not msgHasAlnum then
             print("[CORRUPT] Rejected corrupt package (no alnum) - redundant")
             forceReject(frame.Name)
             continue
         end
 
-        -- ========== NORMAL REJECTION LOGIC ==========
         if unresolved[senderLower] then
             currentAction = "Rejecting failed sender: @" .. senderLower
             forceReject(frame.Name)
@@ -264,7 +259,6 @@ local function processSmartFails()
         end
     end
 
-    -- 60s Fallback for Unresolved Fails
     for badUser, start in pairs(failTimestamps) do
         if now - start > 60 and #unknownFrames > 0 then
             print("[FALLBACK] Rejecting unknown for " .. badUser)
@@ -368,7 +362,11 @@ local function createGui()
     reloadBtn.MouseButton1Click:Connect(function()
         print("[RELOAD] Reloading script from GitHub...")
         KILL = true
-        task.wait(0.5)
+        task.wait(0.5)  -- Allow loops to stop
+        -- Destroy the old GUI
+        local oldGui = CoreGui:FindFirstChild("AutomatorUI")
+        if oldGui then oldGui:Destroy() end
+        -- Load the new script
         loadstring(game:HttpGet("https://raw.githubusercontent.com/haxer321/banana/refs/heads/main/secondly"))()
     end)
 
@@ -435,7 +433,6 @@ end)
 -- BACKGROUND THREADS
 -- =============================================
 
--- Corrupt package detector (runs every 0.5s, independent of FAILS)
 task.spawn(function()
     while not KILL do
         checkCorruptPackages()
@@ -443,7 +440,6 @@ task.spawn(function()
     end
 end)
 
--- Smart fail processor (runs every 2s, only active when FAILS exists)
 task.spawn(function() 
     while not KILL do 
         processSmartFails() 
@@ -452,7 +448,7 @@ task.spawn(function()
 end)
 
 -- =============================================
--- K‑KEY DEBUG (still available for keyboards)
+-- K‑KEY DEBUG
 -- =============================================
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
@@ -518,6 +514,7 @@ while not KILL do
     end
 
     if TARGET <= 0 then continue end
+    if KILL then break end
 
     -- Phase 1: Accumulation
     currentAction = "Collecting packages: 0/" .. TARGET
@@ -530,6 +527,8 @@ while not KILL do
         ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
         task.wait(1)
     end
+    if KILL then break end
+
     currentAction = "Collected " .. TARGET .. " packages, stopping generation"
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
@@ -577,6 +576,7 @@ while not KILL do
             end
         end
     end
+    if KILL then break end
 
     -- Phase 3: Finalize & Next Account
     print("[GATE] 🛡️ VERIFIED: signaling complete.")
