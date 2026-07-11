@@ -118,17 +118,12 @@ local function forceReject(frameName)
 end
 
 -- ===================== NAME EXTRACTION =====================
--- Extracts the sender name from a frame by checking:
---   1) Package.From.Text  (the @mention)
---   2) Package.Message.Text (full message body, e.g. "Time: 06:19 shuttarmurgh")
--- Searches ALL frames and matches against unresolved FAILS list (case-insensitive).
 local function getFrameSender(frame)
     if not frame or not frame:IsA("Frame") then return "unknown" end
 
     local pkg = frame:FindFirstChild("Package")
     if not pkg then return "unknown" end
 
-    -- 1) Try the From label first
     local from = pkg:FindFirstChild("From")
     if from and from:IsA("TextLabel") and from.Text and from.Text ~= "" then
         local txt = from.Text:gsub("@",""):lower()
@@ -137,13 +132,11 @@ local function getFrameSender(frame)
         end
     end
 
-    -- 2) Fallback: scan the entire Message text
     local msg = pkg:FindFirstChild("Message")
     if msg and msg:IsA("TextLabel") and msg.Text and msg.Text ~= "" then
-        return msg.Text  -- returns raw text, will be scanned for substrings
+        return msg.Text
     end
 
-    -- 3) Final fallback: scan every TextLabel inside Package
     for _, d in ipairs(pkg:GetDescendants()) do
         if d:IsA("TextLabel") and d.Text and d.Text ~= "" then
             return d.Text
@@ -153,7 +146,6 @@ local function getFrameSender(frame)
     return "unknown"
 end
 
--- Helper to get the message text from a package frame
 local function getFrameMessage(frame)
     local pkg = frame:FindFirstChild("Package")
     if not pkg then return "" end
@@ -164,7 +156,6 @@ local function getFrameMessage(frame)
     return ""
 end
 
--- Checks if a given text contains any of the unresolved fail names (case-insensitive)
 local function findFailsInText(text, unresolved)
     if not text then return nil end
     local lowered = text:lower()
@@ -176,7 +167,7 @@ local function findFailsInText(text, unresolved)
     return nil
 end
 
--- Background logic for filtering fails and identifying @Unknown packages
+-- ===================== SMART FAIL PROCESSING =====================
 local function processSmartFails()
     if KILL or not FAILS or #FAILS == 0 then return end
     local now = os.clock()
@@ -201,16 +192,15 @@ local function processSmartFails()
         local senderLower = (sender or "unknown"):gsub("@",""):lower()
         local messageTrimmed = message:gsub("%s+", "")
 
-        -- ✨ NEW: Reject immediately if sender is @Unknown AND message is empty (corrupt)
+        -- CORRUPT PACKAGE DETECTION: @Unknown + empty/whitespace message
         if senderLower == "unknown" and messageTrimmed == "" then
+            print("[CORRUPT] Rejected corrupt package from @Unknown with empty message")
             currentAction = "Rejecting corrupt @Unknown with empty message"
             forceReject(frame.Name)
             currentAction = "Idle"
-            -- skip further processing for this frame
             continue
         end
 
-        -- Direct match against the From mention
         if unresolved[senderLower] then
             currentAction = "Rejecting failed sender: @" .. senderLower
             forceReject(frame.Name)
@@ -219,7 +209,6 @@ local function processSmartFails()
             unresolved[senderLower] = nil
             currentAction = "Idle"
         else
-            -- Deep scan the entire message text for unresolved names
             local matched = findFailsInText(sender, unresolved)
             if matched then
                 currentAction = "Rejecting via message scan: @" .. matched
@@ -249,7 +238,6 @@ local function processSmartFails()
 end
 
 -- ===================== GUI =====================
-
 local function createGui()
     local sg = Instance.new("ScreenGui", CoreGui)
     sg.Name = "AutomatorUI"
@@ -277,7 +265,6 @@ local function createGui()
 end
 local gui = createGui()
 
--- GUI update loop – runs every 0.2 seconds, shows all flags on separate lines
 task.spawn(function()
     while not KILL do
         local count = 0
@@ -296,7 +283,6 @@ task.spawn(function()
 end)
 
 -- ===================== WS HANDLERS =====================
-
 local function connectWS()
     local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
     if not ok or not socket then task.wait(5); return connectWS() end
@@ -320,7 +306,7 @@ local function connectWS()
     end)
 end
 
--- Heartbeat Loop - only runs if not killed
+-- Heartbeat Loop
 task.spawn(function()
     while not KILL do
         if ws then 
@@ -353,7 +339,6 @@ while not KILL do
     if hrp then
         hrp.CFrame = TELEPORT
 
-        -- Fire init remote once after first teleport
         if not initFired then
             print("[INIT] Firing startup remote to ensure post office loads...")
             currentAction = "Initializing post office"
@@ -367,7 +352,7 @@ while not KILL do
 
     if TARGET <= 0 then continue end
 
-    -- Phase 1: Accumulation (Gather 4 units)
+    -- Phase 1: Accumulation
     currentAction = "Collecting packages: 0/" .. TARGET
     while not KILL do
         local count = 0
@@ -379,11 +364,9 @@ while not KILL do
         task.wait(1)
     end
     currentAction = "Collected " .. TARGET .. " packages, stopping generation"
-
-    -- Stop generation once count is met
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
-    -- Phase 2: FINAL GATE (Wait for server confirmation + overflow guard)
+    -- Phase 2: FINAL GATE
     print("[GATE] Waiting for DUPE_FLAG == true...")
     currentAction = "Gate: awaiting dupe flag"
     while not KILL do
@@ -406,7 +389,6 @@ while not KILL do
                 forceReject(frames[math.random(1, #frames)].Name)
                 currentAction = "Gate: awaiting dupe flag"
             else
-                -- Exactly 4, server confirmed. Start 60-second stabilization period.
                 print("[GATE] ✅ 4/4 confirmed. Starting 60-second overflow guard...")
                 local startTime = tick()
                 while tick() - startTime < 60 and not KILL do
@@ -424,25 +406,20 @@ while not KILL do
                         currentAction = "Gate: overflow guard (" .. remaining .. "s left)"
                     end
                 end
-                -- after 60 seconds with no overflow (or cleaned), exit
                 break
             end
         end
     end
 
-    -- Phase 4: Finalize & Next Account
+    -- Phase 3: Finalize & Next Account
     print("[GATE] 🛡️ VERIFIED: signaling complete.")
     currentAction = "Signaling complete..."
     ws:Send(HttpService:JSONEncode({ type = "complete" }))
     task.wait(2)
     
-    -- =============================================
-    -- 🟢 INTENTIONAL KICK - DOES NOT TRIGGER REJOIN
-    -- =============================================
     currentAction = "✅ Intentional completion - kicking"
-    INTENTIONAL_KICK = true  -- This prevents the rejoin handler from triggering
+    INTENTIONAL_KICK = true
     
-    -- Stop heartbeat before kicking intentionally
     if ws then
         pcall(function()
             ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
