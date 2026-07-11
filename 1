@@ -3,6 +3,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
+local GuiService = game:GetService("GuiService")
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -10,6 +11,34 @@ end
 task.spawn(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))() end)
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
+
+-- ==================== AUTO-REJOIN SETUP ====================
+-- Create auto-rejoin GUI (for error message detection)
+if game.CoreGui:FindFirstChild('AutoRejoin') then
+    game.CoreGui.AutoRejoin:Destroy()
+end
+
+local AutoRejoin = Instance.new("ScreenGui")
+AutoRejoin.Name = "AutoRejoin"
+AutoRejoin.Parent = game.CoreGui
+AutoRejoin.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+AutoRejoin.ResetOnSpawn = false
+
+-- Auto-rejoin for kicks/errors (except intentional ones)
+local function setupAutoRejoin()
+    GuiService.ErrorMessageChanged:Connect(function()
+        -- Check if this is an intentional kick (hasLeft is true) or not
+        if not hasLeft then
+            print("[AUTO-REJOIN] Kicked unexpectedly! Rejoining...")
+            TeleportService:Teleport(game.PlaceId, player)
+        else
+            print("[AUTO-REJOIN] Intentional kick detected, not rejoining.")
+        end
+    end)
+end
+
+-- ==================== INTENTIONAL KICK FLAG ====================
+local hasLeft = false  -- This will be set to true when we intentionally leave
 
 -- Wait for loading GUI
 local loadingGui = PlayerGui:FindFirstChild("LoadingGui")
@@ -38,7 +67,6 @@ local wsConnected = false
 -- State flags
 local sentFail = false
 local sentRecovered = false
-local hasLeft = false
 local readyToRejoin = false
 local watchdogConnection = nil
 
@@ -109,6 +137,9 @@ end
 -- Connect WebSocket
 setupWebSocket()
 
+-- Setup auto-rejoin (MUST be after hasLeft is defined)
+setupAutoRejoin()
+
 -- ==================== SEND HELPERS ====================
 local function sendWS(payload)
     if ws and wsConnected then
@@ -173,9 +204,9 @@ local function leaveAndWaitForNextCycle()
 
     task.wait(0.5)
 
-    -- Leave game
-    print("[LEAVE] Leaving game...")
-    hasLeft = true
+    -- Leave game (intentional kick)
+    print("[LEAVE] Leaving game intentionally...")
+    hasLeft = true  -- Set flag BEFORE kicking
     player:Kick("Dupe sent - waiting for Check=true AND Busy=false")
 
     -- Watchdog: wait for Check=true AND Busy=false (FOREVER - no timeout)
@@ -213,6 +244,8 @@ local function leaveAndWaitForNextCycle()
 
         task.wait(1)
         print("[WATCHDOG] Teleporting back to game...")
+        -- Reset flag before teleporting so auto-rejoin can work if needed
+        hasLeft = false
         TeleportService:Teleport(game.PlaceId, player)
     end)
 end
