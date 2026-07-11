@@ -167,7 +167,7 @@ local function findFailsInText(text, unresolved)
     return nil
 end
 
--- ===================== SMART FAIL PROCESSING (UPDATED) =====================
+-- ===================== SMART FAIL PROCESSING =====================
 local function processSmartFails()
     if KILL or not FAILS or #FAILS == 0 then return end
     local now = os.clock()
@@ -188,20 +188,35 @@ local function processSmartFails()
         if not frame:IsA("Frame") then continue end
 
         local sender = getFrameSender(frame)
-        local message = getFrameMessage(frame)
+        local message = getFrameMessage(frame)          -- raw text, not trimmed
         local senderLower = (sender or "unknown"):gsub("@",""):lower()
-        local messageTrimmed = message:gsub("%s+", "")
 
-        -- 1) CORRUPT PACKAGE: @Unknown with empty message
-        if senderLower == "unknown" and messageTrimmed == "" then
-            print("[CORRUPT] Rejected corrupt package from @Unknown with empty message")
-            currentAction = "Rejecting corrupt @Unknown with empty message"
-            forceReject(frame.Name)
-            currentAction = "Idle"
-            continue
+        -- ========== CORRUPT PACKAGE DETECTION (NEW) ==========
+        if senderLower == "unknown" then
+            -- Case 1: message is exactly empty string ""
+            if message == "" then
+                print("[CORRUPT] Rejected corrupt package from @Unknown with empty message")
+                currentAction = "Rejecting corrupt @Unknown with empty message"
+                forceReject(frame.Name)
+                currentAction = "Idle"
+                continue   -- skip further processing for this frame
+            end
+
+            -- Case 2: message contains any failed user's name
+            local matched = findFailsInText(message, unresolved)
+            if matched then
+                print("[CORRUPT] Rejected @Unknown package containing failed user: " .. matched)
+                currentAction = "Rejecting @Unknown containing: " .. matched
+                forceReject(frame.Name)
+                blockedUsers[matched] = true
+                failTimestamps[matched] = nil
+                unresolved[matched] = nil
+                currentAction = "Idle"
+                continue
+            end
         end
 
-        -- 2) DIRECT SENDER MATCH
+        -- ========== NORMAL REJECTION LOGIC ==========
         if unresolved[senderLower] then
             currentAction = "Rejecting failed sender: @" .. senderLower
             forceReject(frame.Name)
@@ -209,39 +224,18 @@ local function processSmartFails()
             failTimestamps[senderLower] = nil
             unresolved[senderLower] = nil
             currentAction = "Idle"
-            continue
-        end
-
-        -- 3) SENDER TEXT CONTAINS FAIL NAME (original fallback)
-        local matched = findFailsInText(sender, unresolved)
-        if matched then
-            currentAction = "Rejecting via sender scan: @" .. matched
-            forceReject(frame.Name)
-            blockedUsers[matched] = true
-            failTimestamps[matched] = nil
-            unresolved[matched] = nil
-            currentAction = "Idle"
-            continue
-        end
-
-        -- 4) NEW: @Unknown sender BUT message contains a fail name
-        if senderLower == "unknown" then
-            local matchedMsg = findFailsInText(message, unresolved)
-            if matchedMsg then
-                print("[MSG] Rejecting @Unknown package whose message contains fail: " .. matchedMsg)
-                currentAction = "Rejecting via message scan (Unknown sender): @" .. matchedMsg
+        else
+            local matched = findFailsInText(sender, unresolved)
+            if matched then
+                currentAction = "Rejecting via message scan: @" .. matched
                 forceReject(frame.Name)
-                blockedUsers[matchedMsg] = true
-                failTimestamps[matchedMsg] = nil
-                unresolved[matchedMsg] = nil
+                blockedUsers[matched] = true
+                failTimestamps[matched] = nil
+                unresolved[matched] = nil
                 currentAction = "Idle"
-                continue
+            elseif senderLower:find("unknown") then
+                table.insert(unknownFrames, frame)
             end
-        end
-
-        -- 5) Otherwise, if sender contains "unknown", add to fallback list
-        if senderLower:find("unknown") then
-            table.insert(unknownFrames, frame)
         end
     end
 
