@@ -15,6 +15,7 @@ local RunService  = game:GetService("RunService")
 local CoreGui     = game:GetService("CoreGui")
 local GuiService  = game:GetService("GuiService")
 local TeleportService = game:GetService("TeleportService")
+local UserInputService = game:GetService("UserInputService")  -- For K-key debug
 local player      = Players.LocalPlayer
 local WS_URL      = "ws://localhost:8080"
 local ws          = nil
@@ -167,7 +168,7 @@ local function findFailsInText(text, unresolved)
     return nil
 end
 
--- ===================== SMART FAIL PROCESSING =====================
+-- ===================== SMART FAIL PROCESSING (UPDATED) =====================
 local function processSmartFails()
     if KILL or not FAILS or #FAILS == 0 then return end
     local now = os.clock()
@@ -188,24 +189,25 @@ local function processSmartFails()
         if not frame:IsA("Frame") then continue end
 
         local sender = getFrameSender(frame)
-        local message = getFrameMessage(frame)          -- raw text, not trimmed
+        local message = getFrameMessage(frame)
         local senderLower = (sender or "unknown"):gsub("@",""):lower()
+        local msgTrimmed = (message or ""):gsub("%s+", "")  -- removes all whitespace
 
-        -- ========== CORRUPT PACKAGE DETECTION (NEW) ==========
+        -- ========== CORRUPT PACKAGE DETECTION (ROBUST) ==========
         if senderLower == "unknown" then
-            -- Case 1: message is exactly empty string ""
-            if message == "" then
-                print("[CORRUPT] Rejected corrupt package from @Unknown with empty message")
-                currentAction = "Rejecting corrupt @Unknown with empty message"
+            -- Case 1: empty or whitespace-only message
+            if msgTrimmed == "" then
+                print("[CORRUPT] Rejected @Unknown with empty/whitespace message")
+                currentAction = "Rejecting corrupt @Unknown (empty msg)"
                 forceReject(frame.Name)
                 currentAction = "Idle"
-                continue   -- skip further processing for this frame
+                continue
             end
 
-            -- Case 2: message contains any failed user's name
+            -- Case 2: message contains a failed user's name
             local matched = findFailsInText(message, unresolved)
             if matched then
-                print("[CORRUPT] Rejected @Unknown package containing failed user: " .. matched)
+                print("[CORRUPT] Rejected @Unknown containing failed user: " .. matched)
                 currentAction = "Rejecting @Unknown containing: " .. matched
                 forceReject(frame.Name)
                 blockedUsers[matched] = true
@@ -227,7 +229,7 @@ local function processSmartFails()
         else
             local matched = findFailsInText(sender, unresolved)
             if matched then
-                currentAction = "Rejecting via message scan: @" .. matched
+                currentAction = "Rejecting via sender scan: @" .. matched
                 forceReject(frame.Name)
                 blockedUsers[matched] = true
                 failTimestamps[matched] = nil
@@ -341,6 +343,27 @@ task.spawn(function()
         processSmartFails() 
         task.wait(2) 
     end 
+end)
+
+-- =============================================
+-- K‑KEY DEBUG DUMP (Press K to see package details)
+-- =============================================
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.K then
+        print("===== PACKAGE DUMP =====")
+        local count = 0
+        for _, frame in ipairs(scrollingFrame:GetChildren()) do
+            if frame:IsA("Frame") then
+                count = count + 1
+                local sender = getFrameSender(frame)
+                local msg = getFrameMessage(frame)
+                print(string.format("[%d] Frame: %s | Sender: %s | Message: '%s' | len: %d", 
+                    count, frame.Name, sender, msg, #msg))
+            end
+        end
+        print("========================")
+    end
 end)
 
 -- =============================================
