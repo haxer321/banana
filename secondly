@@ -172,6 +172,12 @@ local function stripInvisible(str)
     return table.concat(filtered)
 end
 
+-- ===================== MEANINGFUL TEXT CHECK =====================
+local function hasAlnum(str)
+    if not str then return false end
+    return str:match("%w") ~= nil  -- any alphanumeric character
+end
+
 -- ===================== CORRUPT PACKAGE DETECTOR (runs independently) =====================
 local function checkCorruptPackages()
     if KILL then return end
@@ -184,13 +190,15 @@ local function checkCorruptPackages()
         local senderStripped = stripInvisible(sender)
         local msgStripped = stripInvisible(message)
         local senderLower = (senderStripped or ""):gsub("@",""):lower()
-        if senderLower == "" then senderLower = "unknown" end
-        local msgTrimmed = msgStripped:gsub("%s+", "")
+        -- If sender has no alphanumeric, treat as "unknown"
+        if not hasAlnum(senderLower) then senderLower = "unknown" end
+        -- If message has no alphanumeric, treat as empty
+        local msgHasAlnum = hasAlnum(msgStripped)
         
-        -- Corrupt if sender effectively empty and message empty/whitespace
-        if senderLower == "unknown" and msgTrimmed == "" then
-            print("[CORRUPT] Rejected corrupt package (empty sender + empty message)")
-            currentAction = "Rejecting corrupt package (empty/invisible)"
+        -- Corrupt if sender is effectively unknown AND message has no meaningful content
+        if senderLower == "unknown" and not msgHasAlnum then
+            print("[CORRUPT] Rejected corrupt package (sender has no alnum, message has no alnum)")
+            currentAction = "Rejecting corrupt package (no alnum)"
             forceReject(frame.Name)
             currentAction = "Idle"
         end
@@ -223,13 +231,12 @@ local function processSmartFails()
         local senderStripped = stripInvisible(sender)
         local msgStripped = stripInvisible(message)
         local senderLower = (senderStripped or ""):gsub("@",""):lower()
-        if senderLower == "" then senderLower = "unknown" end
-        local msgTrimmed = msgStripped:gsub("%s+", "")
+        if not hasAlnum(senderLower) then senderLower = "unknown" end
+        local msgHasAlnum = hasAlnum(msgStripped)
 
-        -- ========== CORRUPT PACKAGE DETECTION (already handled by separate loop) ==========
-        -- but we still keep it here for redundancy
-        if senderLower == "unknown" and msgTrimmed == "" then
-            print("[CORRUPT] Rejected corrupt package (empty sender + empty message) - redundant")
+        -- ========== CORRUPT PACKAGE DETECTION (redundant) ==========
+        if senderLower == "unknown" and not msgHasAlnum then
+            print("[CORRUPT] Rejected corrupt package (no alnum) - redundant")
             forceReject(frame.Name)
             continue
         end
@@ -279,7 +286,7 @@ local function createGui()
     sg.DisplayOrder = 999
 
     local mainFrame = Instance.new("Frame", sg)
-    mainFrame.Size = UDim2.new(0, 420, 0, 240)  -- wider for two buttons
+    mainFrame.Size = UDim2.new(0, 420, 0, 240)
     mainFrame.Position = UDim2.new(0.5, -210, 0.5, -120)
     mainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
     mainFrame.BackgroundTransparency = 0.3
@@ -320,22 +327,23 @@ local function createGui()
                 local senderStripped = stripInvisible(sender)
                 local msgStripped = stripInvisible(msg)
                 local senderLower = (senderStripped or ""):gsub("@",""):lower()
-                if senderLower == "" then senderLower = "unknown" end
-                local msgTrimmed = msgStripped:gsub("%s+", "")
-                local corrupt = (senderLower == "unknown" and msgTrimmed == "")
+                local senderHasAlnum = hasAlnum(senderLower)
+                if not senderHasAlnum then senderLower = "unknown" end
+                local msgHasAlnum = hasAlnum(msgStripped)
+                local corrupt = (senderLower == "unknown" and not msgHasAlnum)
                 
                 print(string.format(
                     "[%d] Frame: %s\n" ..
                     "    Sender raw: '%s' (len=%d)\n" ..
                     "    Message raw: '%s' (len=%d)\n" ..
-                    "    Sender stripped: '%s' (len=%d)\n" ..
-                    "    Message stripped: '%s' (len=%d)\n" ..
+                    "    Sender stripped: '%s' (len=%d) hasAlnum? %s\n" ..
+                    "    Message stripped: '%s' (len=%d) hasAlnum? %s\n" ..
                     "    Corrupt? %s",
                     count, frame.Name,
                     sender, #sender,
                     msg, #msg,
-                    senderStripped, #senderStripped,
-                    msgStripped, #msgStripped,
+                    senderStripped, #senderStripped, tostring(senderHasAlnum),
+                    msgStripped, #msgStripped, tostring(msgHasAlnum),
                     tostring(corrupt)
                 ))
             end
@@ -459,22 +467,23 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
                 local senderStripped = stripInvisible(sender)
                 local msgStripped = stripInvisible(msg)
                 local senderLower = (senderStripped or ""):gsub("@",""):lower()
-                if senderLower == "" then senderLower = "unknown" end
-                local msgTrimmed = msgStripped:gsub("%s+", "")
-                local corrupt = (senderLower == "unknown" and msgTrimmed == "")
+                local senderHasAlnum = hasAlnum(senderLower)
+                if not senderHasAlnum then senderLower = "unknown" end
+                local msgHasAlnum = hasAlnum(msgStripped)
+                local corrupt = (senderLower == "unknown" and not msgHasAlnum)
                 
                 print(string.format(
                     "[%d] Frame: %s\n" ..
                     "    Sender raw: '%s' (len=%d)\n" ..
                     "    Message raw: '%s' (len=%d)\n" ..
-                    "    Sender stripped: '%s' (len=%d)\n" ..
-                    "    Message stripped: '%s' (len=%d)\n" ..
+                    "    Sender stripped: '%s' (len=%d) hasAlnum? %s\n" ..
+                    "    Message stripped: '%s' (len=%d) hasAlnum? %s\n" ..
                     "    Corrupt? %s",
                     count, frame.Name,
                     sender, #sender,
                     msg, #msg,
-                    senderStripped, #senderStripped,
-                    msgStripped, #msgStripped,
+                    senderStripped, #senderStripped, tostring(senderHasAlnum),
+                    msgStripped, #msgStripped, tostring(msgHasAlnum),
                     tostring(corrupt)
                 ))
             end
