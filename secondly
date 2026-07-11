@@ -153,6 +153,17 @@ local function getFrameSender(frame)
     return "unknown"
 end
 
+-- Helper to get the message text from a package frame
+local function getFrameMessage(frame)
+    local pkg = frame:FindFirstChild("Package")
+    if not pkg then return "" end
+    local msg = pkg:FindFirstChild("Message")
+    if msg and msg:IsA("TextLabel") then
+        return msg.Text or ""
+    end
+    return ""
+end
+
 -- Checks if a given text contains any of the unresolved fail names (case-insensitive)
 local function findFailsInText(text, unresolved)
     if not text then return nil end
@@ -186,15 +197,26 @@ local function processSmartFails()
         if not frame:IsA("Frame") then continue end
 
         local sender = getFrameSender(frame)
-        sender = (sender or "unknown"):gsub("@",""):lower()
+        local message = getFrameMessage(frame)
+        local senderLower = (sender or "unknown"):gsub("@",""):lower()
+        local messageTrimmed = message:gsub("%s+", "")
+
+        -- ✨ NEW: Reject immediately if sender is @Unknown AND message is empty (corrupt)
+        if senderLower == "unknown" and messageTrimmed == "" then
+            currentAction = "Rejecting corrupt @Unknown with empty message"
+            forceReject(frame.Name)
+            currentAction = "Idle"
+            -- skip further processing for this frame
+            continue
+        end
 
         -- Direct match against the From mention
-        if unresolved[sender] then
-            currentAction = "Rejecting failed sender: @" .. sender
+        if unresolved[senderLower] then
+            currentAction = "Rejecting failed sender: @" .. senderLower
             forceReject(frame.Name)
-            blockedUsers[sender] = true
-            failTimestamps[sender] = nil
-            unresolved[sender] = nil
+            blockedUsers[senderLower] = true
+            failTimestamps[senderLower] = nil
+            unresolved[senderLower] = nil
             currentAction = "Idle"
         else
             -- Deep scan the entire message text for unresolved names
@@ -206,7 +228,7 @@ local function processSmartFails()
                 failTimestamps[matched] = nil
                 unresolved[matched] = nil
                 currentAction = "Idle"
-            elseif sender:find("unknown") then
+            elseif senderLower:find("unknown") then
                 table.insert(unknownFrames, frame)
             end
         end
