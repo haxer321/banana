@@ -48,7 +48,7 @@ local function setupAutoRejoin()
             task.wait(1)
             TeleportService:Teleport(game.PlaceId, player)
         else
-            print("[AUTO-REJOIN] Intentional leave in progress, ignoring error.")
+            print("[AUTO-REJOIN] Intentional leave in progress, ignoring error message.")
         end
     end)
 end
@@ -191,48 +191,40 @@ local staticString = "\218\239*\223\237\226@\151\148Y@7%\190&\159"
 local function leaveAndWaitForNextCycle()
     print("[LEAVE] Account: " .. player.Name)
 
-    -- Signal dupe to server (all 4 accounts do this once)
+    -- Signal dupe to server
     sendDupeTrue()
     print("[LEAVE] Sent Dupe=true")
 
     task.wait(0.5)
 
-    -- Mark intentional leave. DO NOT Kick — kicking stops the script
-    -- and the watchdog would never fire the teleport.
+    -- Set flags BEFORE kicking
     hasLeft = true
-    print("[LEAVE] hasLeft=true. Staying in-game, waiting for WS go-ahead...")
+    readyToRejoin = false
 
-    -- Watchdog: also listen directly for the go-ahead state
+    print("[LEAVE] hasLeft=true. Kicking from server, waiting for WS go-ahead...")
+
+    -- Start watchdog BEFORE kicking so it's ready to receive WS messages
     task.spawn(function()
-        print("[WATCHDOG] Waiting for Check=true AND Busy=false...")
-        if ws and ws.OnMessage then
-            watchdogConnection = ws.OnMessage:Connect(function(msg)
-                local ok, data = pcall(function() return HttpService:JSONDecode(msg) end)
-                if ok and data and data.type == "state" and data.state then
-                    local check = data.state.Check
-                    local busy  = data.state.Busy
-                    print(string.format("[WATCHDOG] Check: %s, Busy: %s",
-                        tostring(check), tostring(busy)))
-                    if check == true and busy == false then
-                        readyToRejoin = true
-                        if watchdogConnection then
-                            watchdogConnection:Disconnect()
-                            watchdogConnection = nil
-                        end
-                    end
-                end
-            end)
-        end
-
-        -- Wait indefinitely for the go-ahead
+        print("[WATCHDOG] Waiting 5 seconds to let server update state...")
+        task.wait(5) -- Ignore stale "ready" states from previous cycles
+        
+        print("[WATCHDOG] Now listening for Check=true AND Busy=false...")
+        
+        -- Check current state in case it changed while we were waiting
+        -- (The global WS handler will set readyToRejoin if it sees the state)
+        
         while not readyToRejoin do task.wait(0.5) end
 
         task.wait(1)
-        print("[WATCHDOG] Go-ahead received. Teleporting back to game...")
-        -- Reset so an unexpected kick during teleport still re-joins.
-        hasLeft = false
+        print("[WATCHDOG] Go-ahead received. Rejoining game...")
+        -- We do NOT reset hasLeft here, because TeleportService will trigger a new load
+        -- and we want to prevent the auto-rejoin from double-firing during the teleport.
         TeleportService:Teleport(game.PlaceId, player)
     end)
+
+    task.wait(0.1)
+    -- Kick intentionally (script survives in exploit environment)
+    player:Kick("Dupe sent - waiting for Check=true AND Busy=false")
 end
 
 -- ==================== MAIN LOOP ====================
