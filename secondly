@@ -145,7 +145,7 @@ local function forceReject(frame)
     local attempts = 0
     while not KILL and frame.Parent do
         pcall(function() remote:FireServer(rejectArgs) end)
-        task.wait(1)  -- give game time to process
+        task.wait(5)  -- give game time to process
         attempts = attempts + 1
         if attempts > 30 then break end  -- safety limit
     end
