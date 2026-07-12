@@ -1,10 +1,9 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — DYNAMIC LOG + SEPARATE FLAGS
+-- 📡 ANDROID AUTOMATOR — FAST REJECT EDITION
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
--- Anti-AFK Background Task
 task.spawn(function()
     loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))()
 end)
@@ -18,7 +17,7 @@ local TeleportService = game:GetService("TeleportService")
 local UserInputService = game:GetService("UserInputService")
 local player      = Players.LocalPlayer
 
--- ===================== WAIT FOR LOADING SCREEN TO DISAPPEAR =====================
+-- ===================== WAIT FOR LOADING SCREEN =====================
 local playerGui = player:WaitForChild("PlayerGui")
 local function waitForLoading()
     local loadingGui = playerGui:FindFirstChild("LoadingGui")
@@ -26,33 +25,29 @@ local function waitForLoading()
         print("[INFO] Waiting for LoadingGui to disappear...")
         loadingGui:GetPropertyChangedSignal("Parent"):Wait()
         while loadingGui.Parent do task.wait(0.05) end
-        print("[INFO] Loading GUI disappeared → verifying 5s stable")
         task.wait(5)
-    else
-        print("[INFO] No LoadingGui found → assuming already loaded")
     end
-    print("[INFO] Game fully loaded")
 end
-waitForLoading()  -- <-- critical addition
+waitForLoading()
 
-local WS_URL      = "ws://localhost:8080"
-local ws          = nil
+local WS_URL = "ws://localhost:8080"
+local ws = nil
 
 -- STATE
-local TARGET      = 4
-local FAILS       = {}
-local DUPE_FLAG   = false
-local CHECK_FLAG  = true
-local FAILS_COUNT = 0
+local TARGET       = 4
+local FAILS        = {}
+local DUPE_FLAG    = false
+local CHECK_FLAG   = true
+local FAILS_COUNT  = 0
 local PACKAGE_GEMS = 2500000
-local TELEPORT    = CFrame.new(-460, 244, -67)
+local TELEPORT     = CFrame.new(-460, 244, -67)
 local currentAction = "Idle"
 
-local blockedUsers = {}
+local blockedUsers   = {}
 local failTimestamps = {}
 
 -- =============================================
--- ⚡ UNEXPECTED KILL SWITCH
+-- ⚡ KILL SWITCH
 -- =============================================
 local KILL = false
 local INTENTIONAL_KICK = false
@@ -60,9 +55,7 @@ local INTENTIONAL_KICK = false
 local function killEverythingAndRejoin()
     if KILL then return end
     KILL = true
-    print("[KILL] ⚠️ UNEXPECTED kick/error detected! Stopping heartbeats and rejoining...")
     currentAction = "KILL: Unexpected kick - rejoining..."
-    
     if ws then
         pcall(function()
             ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
@@ -70,24 +63,18 @@ local function killEverythingAndRejoin()
         end)
         ws = nil
     end
-    
     task.wait(1)
-    pcall(function()
-        TeleportService:Teleport(game.PlaceId, player)
-    end)
+    pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
     task.wait(2)
-    if not KILL then
-        player:Kick("Unexpected error - rejoin attempted")
-    end
+    if not KILL then player:Kick("Unexpected error - rejoin attempted") end
 end
 
-local function onErrorMessageChanged(errorMessage)
+GuiService.ErrorMessageChanged:Connect(function(errorMessage)
     if errorMessage and errorMessage ~= "" and not KILL and not INTENTIONAL_KICK then
         print("[ERROR] Unexpected error: " .. errorMessage)
         killEverythingAndRejoin()
     end
-end
-GuiService.ErrorMessageChanged:Connect(onErrorMessageChanged)
+end)
 
 Players.PlayerRemoving:Connect(function(p)
     if p == player and not KILL and not INTENTIONAL_KICK then
@@ -107,42 +94,74 @@ local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba").Value
 local initFired = false
 
--- ===================== REJECT SYSTEM =====================
+-- =============================================
+-- ⚡ FAST FRAME CACHE (event-driven count)
+-- =============================================
+local frameCache = {}        -- [frameName] = frame
+local frameCount = 0
+
+local function rebuildCache()
+    frameCache = {}
+    frameCount = 0
+    for _, v in ipairs(scrollingFrame:GetChildren()) do
+        if v:IsA("Frame") then
+            frameCache[v.Name] = v
+            frameCount = frameCount + 1
+        end
+    end
+end
+rebuildCache()
+
+local function getFrames()
+    local out = {}
+    for _, f in pairs(frameCache) do table.insert(out, f) end
+    return out
+end
+
+scrollingFrame.ChildAdded:Connect(function(c)
+    if c:IsA("Frame") then
+        frameCache[c.Name] = c
+        frameCount = frameCount + 1
+    end
+end)
+scrollingFrame.ChildRemoved:Connect(function(c)
+    if c:IsA("Frame") and frameCache[c.Name] then
+        frameCache[c.Name] = nil
+        frameCount = frameCount - 1
+        if frameCount < 0 then frameCount = 0 end
+    end
+end)
+
+-- =============================================
+-- ⚡ FAST REJECT (tight loop, no re-iteration)
+-- =============================================
 local function forceReject(frameName)
     if KILL then return end
     print("[FORCE] Spaming reject for: " .. frameName)
-    currentAction = "Rejecting overflow: " .. frameName
-    while not KILL do
-        local stillExists = false
-        for _, v in ipairs(scrollingFrame:GetChildren()) do
-            if v.Name == frameName then stillExists = true break end
-        end
-        if not stillExists then break end
-        
-        pcall(function()
-            remote:FireServer({ {rejectId, rejectStr, frameName} })
-        end)
-        task.wait(0.05) 
+    currentAction = "Rejecting: " .. frameName
+    local rejectArgs = { { rejectId, rejectStr, frameName } }
+    -- Hard cap 1.2s of spamming so it never blocks the pipeline too long
+    local startT = os.clock()
+    while not KILL and frameCache[frameName] and os.clock() - startT < 1.2 do
+        pcall(function() remote:FireServer(rejectArgs) end)
+        task.wait(0.02)  -- was 0.05, halved
     end
     currentAction = "Idle"
 end
 
--- ===================== NAME EXTRACTION (STRICTLY FROM "From" label) =====================
+-- =============================================
+-- NAME / MESSAGE EXTRACTION
+-- =============================================
 local function getFrameSender(frame)
     if not frame or not frame:IsA("Frame") then return "unknown" end
-
     local pkg = frame:FindFirstChild("Package")
     if not pkg then return "unknown" end
-
     local from = pkg:FindFirstChild("From")
     if from and from:IsA("TextLabel") then
         local txt = from.Text or ""
         txt = txt:gsub("@",""):lower()
-        if txt ~= "" then
-            return txt
-        end
+        if txt ~= "" then return txt end
     end
-
     return "unknown"
 end
 
@@ -150,16 +169,14 @@ local function getFrameMessage(frame)
     local pkg = frame:FindFirstChild("Package")
     if not pkg then return "" end
     local msg = pkg:FindFirstChild("Message")
-    if msg and msg:IsA("TextLabel") then
-        return msg.Text or ""
-    end
+    if msg and msg:IsA("TextLabel") then return msg.Text or "" end
     return ""
 end
 
 local function findFailsInText(text, unresolved)
     if not text then return nil end
     local lowered = text:lower()
-    for badUser, _ in pairs(unresolved) do
+    for badUser in pairs(unresolved) do
         if badUser and badUser ~= "" and lowered:find(badUser, 1, true) then
             return badUser
         end
@@ -167,55 +184,30 @@ local function findFailsInText(text, unresolved)
     return nil
 end
 
--- ===================== STRIP INVISIBLE CHARACTERS =====================
 local function stripInvisible(str)
     if not str then return "" end
     local filtered = {}
     for i = 1, #str do
         local byte = str:byte(i)
-        if byte >= 32 and byte <= 126 then  -- printable ASCII
+        if byte >= 32 and byte <= 126 then
             table.insert(filtered, str:sub(i, i))
         end
     end
     return table.concat(filtered)
 end
 
--- ===================== MEANINGFUL TEXT CHECK =====================
 local function hasAlnum(str)
     if not str then return false end
     return str:match("%w") ~= nil
 end
 
--- ===================== CORRUPT PACKAGE DETECTOR (runs independently) =====================
-local function checkCorruptPackages()
-    if KILL then return end
-    for _, frame in ipairs(scrollingFrame:GetChildren()) do
-        if not frame:IsA("Frame") then continue end
-        
-        local sender = getFrameSender(frame)
-        local message = getFrameMessage(frame)
-        
-        local senderStripped = stripInvisible(sender)
-        local msgStripped = stripInvisible(message)
-        local senderLower = (senderStripped or ""):gsub("@",""):lower()
-        if not hasAlnum(senderLower) then senderLower = "unknown" end
-        local msgHasAlnum = hasAlnum(msgStripped)
-        
-        if senderLower == "unknown" and not msgHasAlnum then
-            print("[CORRUPT] Rejected corrupt package (sender has no alnum, message has no alnum)")
-            currentAction = "Rejecting corrupt package (no alnum)"
-            forceReject(frame.Name)
-            currentAction = "Idle"
-        end
-    end
-end
-
--- ===================== SMART FAIL PROCESSING =====================
-local function processSmartFails()
-    if KILL or not FAILS or #FAILS == 0 then return end
+-- =============================================
+-- ⚡ INSTANT FAIL PROCESSOR (triggered on data_update)
+-- =============================================
+local function processFailsNow()
+    if KILL or #FAILS == 0 then return end
     local now = os.clock()
     local unresolved = {}
-
     for _, user in ipairs(FAILS) do
         local name = user:gsub("@",""):lower()
         if name ~= "" and not blockedUsers[name] then
@@ -223,88 +215,100 @@ local function processSmartFails()
             if not failTimestamps[name] then failTimestamps[name] = now end
         end
     end
-
     if next(unresolved) == nil then return end
 
     local unknownFrames = {}
-    for _, frame in ipairs(scrollingFrame:GetChildren()) do
-        if not frame:IsA("Frame") then continue end
-
+    for _, frame in ipairs(getFrames()) do
         local sender = getFrameSender(frame)
         local message = getFrameMessage(frame)
-        
         local senderStripped = stripInvisible(sender)
         local msgStripped = stripInvisible(message)
         local senderLower = (senderStripped or ""):gsub("@",""):lower()
         if not hasAlnum(senderLower) then senderLower = "unknown" end
         local msgHasAlnum = hasAlnum(msgStripped)
 
-        -- 1) Corrupt: sender unknown & message has no alnum
+        -- 1) Corrupt
         if senderLower == "unknown" and not msgHasAlnum then
-            print("[CORRUPT] Rejected corrupt package (no alnum) - redundant")
             forceReject(frame.Name)
             continue
         end
 
-        -- 2) If sender is unknown, check if message contains a fail name
+        -- 2) Unknown sender + message contains fail name
         if senderLower == "unknown" then
             local matched = findFailsInText(message, unresolved)
             if matched then
-                print("[UNKNOWN SENDER] Rejected @Unknown package whose message contains fail: " .. matched)
-                currentAction = "Rejecting @Unknown with message containing: " .. matched
                 forceReject(frame.Name)
                 blockedUsers[matched] = true
                 failTimestamps[matched] = nil
                 unresolved[matched] = nil
-                currentAction = "Idle"
                 continue
             end
         end
 
         -- 3) Direct sender match
         if unresolved[senderLower] then
-            currentAction = "Rejecting failed sender: @" .. senderLower
             forceReject(frame.Name)
             blockedUsers[senderLower] = true
             failTimestamps[senderLower] = nil
             unresolved[senderLower] = nil
-            currentAction = "Idle"
             continue
         end
 
         -- 4) Sender text contains fail name (fallback)
         local matched = findFailsInText(sender, unresolved)
         if matched then
-            currentAction = "Rejecting via sender scan: @" .. matched
             forceReject(frame.Name)
             blockedUsers[matched] = true
             failTimestamps[matched] = nil
             unresolved[matched] = nil
-            currentAction = "Idle"
             continue
         end
 
-        -- 5) If sender contains "unknown" (but not a fail), add to fallback list
+        -- 5) Unknown frames for 60s fallback
         if senderLower:find("unknown") then
             table.insert(unknownFrames, frame)
         end
     end
 
-    -- 6) 60‑second fallback for unresolved fails
-    for badUser, start in pairs(failTimestamps) do
-        if now - start > 60 and #unknownFrames > 0 then
+    -- 6) 60s fallback
+    for badUser, startT in pairs(failTimestamps) do
+        if now - startT > 60 and #unknownFrames > 0 then
             print("[FALLBACK] Rejecting unknown for " .. badUser)
-            currentAction = "Fallback reject for " .. badUser
             forceReject(unknownFrames[1].Name)
             blockedUsers[badUser] = true
             failTimestamps[badUser] = nil
             table.remove(unknownFrames, 1)
-            currentAction = "Idle"
         end
     end
 end
 
--- ===================== GUI with Debug + Reload Buttons =====================
+-- Background corrupt scanner (still useful but faster)
+task.spawn(function()
+    while not KILL do
+        for _, frame in ipairs(getFrames()) do
+            local sender = stripInvisible(getFrameSender(frame))
+            local msg = stripInvisible(getFrameMessage(frame))
+            local sLower = sender:gsub("@",""):lower()
+            if not hasAlnum(sLower) then sLower = "unknown" end
+            if sLower == "unknown" and not hasAlnum(msg) then
+                forceReject(frame.Name)
+            end
+        end
+        task.wait(0.25)  -- was 0.5
+    end
+end)
+
+-- Backup pass every 0.5s for fails that arrived mid-flight
+task.spawn(function()
+    while not KILL do
+        processFailsNow()
+        task.wait(0.5)  -- was 2
+    end
+end)
+
+-- =============================================
+-- GUI
+-- =============================================
 local function createGui()
     local sg = Instance.new("ScreenGui", CoreGui)
     sg.Name = "AutomatorUI"
@@ -316,8 +320,7 @@ local function createGui()
     mainFrame.Position = UDim2.new(0.5, -210, 0.5, -120)
     mainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
     mainFrame.BackgroundTransparency = 0.3
-    local border = Instance.new("UICorner", mainFrame)
-    border.CornerRadius = UDim.new(0,6)
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0,6)
 
     local label = Instance.new("TextLabel", mainFrame)
     label.Size = UDim2.new(1, -10, 1, -50)
@@ -330,311 +333,208 @@ local function createGui()
     label.TextYAlignment = Enum.TextYAlignment.Top
     label.Text = "Loading..."
 
-    -- Dump button
-    local debugBtn = Instance.new("TextButton", mainFrame)
-    debugBtn.Size = UDim2.new(0, 80, 0, 30)
-    debugBtn.Position = UDim2.new(1, -180, 1, -40)
-    debugBtn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
-    debugBtn.TextColor3 = Color3.new(1, 1, 1)
-    debugBtn.Text = "Dump"
-    debugBtn.Font = Enum.Font.SourceSans
-    debugBtn.TextScaled = true
-    local btnCorner1 = Instance.new("UICorner", debugBtn)
-    btnCorner1.CornerRadius = UDim.new(0,4)
+    local function makeBtn(text, posX)
+        local b = Instance.new("TextButton", mainFrame)
+        b.Size = UDim2.new(0, 80, 0, 30)
+        b.Position = posX
+        b.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+        b.TextColor3 = Color3.new(1, 1, 1)
+        b.Text = text
+        b.Font = Enum.Font.SourceSans
+        b.TextScaled = true
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0,4)
+        return b
+    end
 
-    debugBtn.MouseButton1Click:Connect(function()
-        print("\n===== PACKAGE DUMP (button) =====")
+    local debugBtn = makeBtn("Dump", UDim2.new(1, -180, 1, -40))
+    local reloadBtn = makeBtn("Reload", UDim2.new(1, -90, 1, -40))
+
+    local function dump()
+        print("\n===== PACKAGE DUMP =====")
         local count = 0
-        for _, frame in ipairs(scrollingFrame:GetChildren()) do
-            if frame:IsA("Frame") then
-                count = count + 1
-                local sender = getFrameSender(frame)
-                local msg = getFrameMessage(frame)
-                local senderStripped = stripInvisible(sender)
-                local msgStripped = stripInvisible(msg)
-                local senderLower = (senderStripped or ""):gsub("@",""):lower()
-                local senderHasAlnum = hasAlnum(senderLower)
-                if not senderHasAlnum then senderLower = "unknown" end
-                local msgHasAlnum = hasAlnum(msgStripped)
-                local corrupt = (senderLower == "unknown" and not msgHasAlnum)
-                
-                print(string.format(
-                    "[%d] Frame: %s\n" ..
-                    "    Sender raw: '%s' (len=%d)\n" ..
-                    "    Message raw: '%s' (len=%d)\n" ..
-                    "    Sender stripped: '%s' (len=%d) hasAlnum? %s\n" ..
-                    "    Message stripped: '%s' (len=%d) hasAlnum? %s\n" ..
-                    "    Corrupt? %s",
-                    count, frame.Name,
-                    sender, #sender,
-                    msg, #msg,
-                    senderStripped, #senderStripped, tostring(senderHasAlnum),
-                    msgStripped, #msgStripped, tostring(msgHasAlnum),
-                    tostring(corrupt)
-                ))
-            end
+        for _, frame in ipairs(getFrames()) do
+            count = count + 1
+            local sender = getFrameSender(frame)
+            local msg = getFrameMessage(frame)
+            local senderStripped = stripInvisible(sender)
+            local msgStripped = stripInvisible(msg)
+            local senderLower = (senderStripped or ""):gsub("@",""):lower()
+            local senderHasAlnum = hasAlnum(senderLower)
+            if not senderHasAlnum then senderLower = "unknown" end
+            local msgHasAlnum = hasAlnum(msgStripped)
+            local corrupt = (senderLower == "unknown" and not msgHasAlnum)
+            print(string.format(
+                "[%d] Frame: %s\n    Sender raw: '%s' (len=%d)\n    Message raw: '%s' (len=%d)\n    Sender stripped: '%s' hasAlnum? %s\n    Message stripped: '%s' hasAlnum? %s\n    Corrupt? %s",
+                count, frame.Name, sender, #sender, msg, #msg,
+                senderStripped, tostring(senderHasAlnum), msgStripped, tostring(msgHasAlnum), tostring(corrupt)
+            ))
         end
-        print("FAILS list:", HttpService:JSONEncode(FAILS))
+        print("FAILS:", HttpService:JSONEncode(FAILS))
         print("blockedUsers:", HttpService:JSONEncode(blockedUsers))
-        print("==================================\n")
+        print("=========================\n")
+    end
+
+    debugBtn.MouseButton1Click:Connect(dump)
+    UserInputService.InputBegan:Connect(function(input, gp)
+        if not gp and input.KeyCode == Enum.KeyCode.K then dump() end
     end)
 
-    -- Reload button
-    local reloadBtn = Instance.new("TextButton", mainFrame)
-    reloadBtn.Size = UDim2.new(0, 80, 0, 30)
-    reloadBtn.Position = UDim2.new(1, -90, 1, -40)
-    reloadBtn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
-    reloadBtn.TextColor3 = Color3.new(1, 1, 1)
-    reloadBtn.Text = "Reload"
-    reloadBtn.Font = Enum.Font.SourceSans
-    reloadBtn.TextScaled = true
-    local btnCorner2 = Instance.new("UICorner", reloadBtn)
-    btnCorner2.CornerRadius = UDim.new(0,4)
-
     reloadBtn.MouseButton1Click:Connect(function()
-        print("[RELOAD] Reloading script from GitHub...")
+        print("[RELOAD] Reloading...")
         KILL = true
-        task.wait(0.5)
-        local oldGui = CoreGui:FindFirstChild("AutomatorUI")
-        if oldGui then oldGui:Destroy() end
+        task.wait(0.3)
+        local old = CoreGui:FindFirstChild("AutomatorUI")
+        if old then old:Destroy() end
         loadstring(game:HttpGet("https://raw.githubusercontent.com/haxer321/banana/refs/heads/main/secondly"))()
     end)
 
-    return label, debugBtn, reloadBtn
+    return label
 end
 
-local guiLabel, debugButton, reloadButton = createGui()
+local guiLabel = createGui()
 
 task.spawn(function()
     while not KILL do
-        local count = 0
-        for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
-        local fc = #FAILS
         guiLabel.Text = string.format(
             "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s",
-            count, TARGET,
-            tostring(DUPE_FLAG),
-            tostring(CHECK_FLAG),
-            fc,
-            currentAction
+            frameCount, TARGET,
+            tostring(DUPE_FLAG), tostring(CHECK_FLAG),
+            #FAILS, currentAction
         )
-        task.wait(0.2)
+        task.wait(0.15)
     end
 end)
 
--- ===================== WS HANDLERS =====================
+-- =============================================
+-- WS HANDLERS — process fails INSTANTLY on data update
+-- =============================================
 local function connectWS()
     local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
-    if not ok or not socket then task.wait(5); return connectWS() end
+    if not ok or not socket then task.wait(3); return connectWS() end
     ws = socket
     ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
     ws.OnMessage:Connect(function(msg)
         local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
         if ok2 and data.type == "data_update" then
             TARGET = 4
-            FAILS = data.Fails or data.fails or {}
-            if data.Dupe == true and not DUPE_FLAG then blockedUsers = {}; failTimestamps = {} end
-            DUPE_FLAG = (data.Dupe == true)
+            local newFails = data.Fails or data.fails or {}
+            local dupeNow = (data.Dupe == true)
+            if dupeNow and not DUPE_FLAG then
+                blockedUsers = {}; failTimestamps = {}
+            end
+            DUPE_FLAG = dupeNow
             CHECK_FLAG = (data.Check == true)
+            FAILS = newFails
+            -- ⚡ INSTANT processing instead of waiting for the 0.5s poll
+            task.spawn(function() processFailsNow() end)
         end
     end)
-    ws.OnClose:Connect(function() 
-        if not KILL then
-            task.wait(2)
-            connectWS()
-        end
+    ws.OnClose:Connect(function()
+        if not KILL then task.wait(2); connectWS() end
     end)
 end
 
--- Heartbeat Loop
 task.spawn(function()
     while not KILL do
-        if ws then 
-            pcall(function() 
-                ws:Send(HttpService:JSONEncode({type="heartbeat",user=player.Name})) 
-                ws:Send(HttpService:JSONEncode({type="get_data"})) 
-            end) 
+        if ws then
+            pcall(function()
+                ws:Send(HttpService:JSONEncode({type="heartbeat",user=player.Name}))
+                ws:Send(HttpService:JSONEncode({type="get_data"}))
+            end)
         end
-        task.wait(10)
+        task.wait(7)  -- was 10
     end
 end)
 
 -- =============================================
--- BACKGROUND THREADS
--- =============================================
-
-task.spawn(function()
-    while not KILL do
-        checkCorruptPackages()
-        task.wait(0.5)
-    end
-end)
-
-task.spawn(function() 
-    while not KILL do 
-        processSmartFails() 
-        task.wait(2) 
-    end 
-end)
-
--- =============================================
--- K‑KEY DEBUG
--- =============================================
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.KeyCode == Enum.KeyCode.K then
-        print("\n===== PACKAGE DUMP (K key) =====")
-        local count = 0
-        for _, frame in ipairs(scrollingFrame:GetChildren()) do
-            if frame:IsA("Frame") then
-                count = count + 1
-                local sender = getFrameSender(frame)
-                local msg = getFrameMessage(frame)
-                local senderStripped = stripInvisible(sender)
-                local msgStripped = stripInvisible(msg)
-                local senderLower = (senderStripped or ""):gsub("@",""):lower()
-                local senderHasAlnum = hasAlnum(senderLower)
-                if not senderHasAlnum then senderLower = "unknown" end
-                local msgHasAlnum = hasAlnum(msgStripped)
-                local corrupt = (senderLower == "unknown" and not msgHasAlnum)
-                
-                print(string.format(
-                    "[%d] Frame: %s\n" ..
-                    "    Sender raw: '%s' (len=%d)\n" ..
-                    "    Message raw: '%s' (len=%d)\n" ..
-                    "    Sender stripped: '%s' (len=%d) hasAlnum? %s\n" ..
-                    "    Message stripped: '%s' (len=%d) hasAlnum? %s\n" ..
-                    "    Corrupt? %s",
-                    count, frame.Name,
-                    sender, #sender,
-                    msg, #msg,
-                    senderStripped, #senderStripped, tostring(senderHasAlnum),
-                    msgStripped, #msgStripped, tostring(msgHasAlnum),
-                    tostring(corrupt)
-                ))
-            end
-        end
-        print("FAILS list:", HttpService:JSONEncode(FAILS))
-        print("blockedUsers:", HttpService:JSONEncode(blockedUsers))
-        print("==================================\n")
-    end
-end)
-
--- =============================================
--- MAIN LOOP
+-- MAIN LOOP — tightened wait times
 -- =============================================
 RunService:Set3dRenderingEnabled(false)
 connectWS()
 
 while not KILL do
-    task.wait(2)
+    task.wait(0.5)  -- was 2
     local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
     if hrp then
         hrp.CFrame = TELEPORT
-
         if not initFired then
-            print("[INIT] Firing startup remote to ensure post office loads...")
             currentAction = "Initializing post office"
-            pcall(function()
-                remote:FireServer({ { initIdentifier } })
-            end)
+            pcall(function() remote:FireServer({ { initIdentifier } }) end)
             initFired = true
-            currentAction = "Idle"
         end
     end
 
     if TARGET <= 0 then continue end
     if KILL then break end
 
-    -- Phase 1: Accumulation
+    -- Phase 1: Accumulation (tight loop)
     currentAction = "Collecting packages: 0/" .. TARGET
     while not KILL do
-        local count = 0
-        for _, v in ipairs(scrollingFrame:GetChildren()) do if v:IsA("Frame") then count = count + 1 end end
-        if count >= TARGET then break end
-        
-        currentAction = "Collecting packages: " .. count .. "/" .. TARGET
-        ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
-        task.wait(1)
+        if frameCount >= TARGET then break end
+        currentAction = "Collecting packages: " .. frameCount .. "/" .. TARGET
+        if ws then
+            pcall(function() ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" })) end)
+        end
+        task.wait(0.3)  -- was 1
     end
     if KILL then break end
 
-    currentAction = "Collected " .. TARGET .. " packages, stopping generation"
-    ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
+    currentAction = "Collected " .. TARGET .. ", stopping generation"
+    if ws then
+        pcall(function() ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" })) end)
+    end
 
-    -- Phase 2: FINAL GATE (with FAILS check)
-    print("[GATE] Waiting for DUPE_FLAG == true...")
+    -- Phase 2: GATE
     currentAction = "Gate: awaiting dupe flag"
     while not KILL do
         if ws then ws:Send(HttpService:JSONEncode({ type = "get_data" })) end
-        task.wait(1)
+        task.wait(0.3)  -- was 1
 
         if DUPE_FLAG == true then
-            local frames = {}
-            for _, v in ipairs(scrollingFrame:GetChildren()) do
-                if v:IsA("Frame") then table.insert(frames, v) end
-            end
-
-            if #frames < 4 then
-                print("[GATE] Count dropped below 4! Restarting generation...")
-                currentAction = "Gate: count <4, restarting generation"
-                ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" }))
-            elseif #frames > 4 then
-                print("[GATE] Overflow detected during gate. Rejecting one...")
-                currentAction = "Gate: rejecting overflow (" .. #frames .. " packages)"
+            if frameCount < 4 then
+                currentAction = "Gate: count <4, restarting"
+                if ws then ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" })) end
+            elseif frameCount > 4 then
+                local frames = getFrames()
                 forceReject(frames[math.random(1, #frames)].Name)
                 currentAction = "Gate: awaiting dupe flag"
             else
-                -- ✅ 4 packages confirmed, now wait for FAILS to be empty
-                print("[GATE] 4/4 confirmed. Waiting for FAILS to clear...")
+                -- 4 confirmed, wait for FAILS to clear
                 currentAction = "Waiting for FAILS to clear... (#" .. #FAILS .. ")"
                 while not KILL and #FAILS > 0 do
-                    local currentFrames = {}
-                    for _, v in ipairs(scrollingFrame:GetChildren()) do
-                        if v:IsA("Frame") then table.insert(currentFrames, v) end
-                    end
-                    if #currentFrames > 4 then
-                        print("[GATE] Overflow during FAILS wait. Rejecting...")
-                        forceReject(currentFrames[math.random(1, #currentFrames)].Name)
+                    if frameCount > 4 then
+                        local f = getFrames()
+                        forceReject(f[math.random(1, #f)].Name)
                     end
                     currentAction = "Waiting for FAILS to clear... (#" .. #FAILS .. ")"
-                    task.wait(1)
+                    task.wait(0.3)  -- was 1
                 end
                 if KILL then break end
 
-                -- Now FAILS is empty, start the 60‑second guard
-                print("[GATE] ✅ 4/4 and FAILS cleared. Starting 60-second overflow guard...")
-                local startTime = tick()
-                while tick() - startTime < 60 and not KILL do
-                    local remaining = 60 - math.floor(tick() - startTime)
-                    currentAction = "Gate: overflow guard (" .. remaining .. "s left)"
-                    task.wait(0.5)
-                    local currentFrames = {}
-                    for _, v in ipairs(scrollingFrame:GetChildren()) do
-                        if v:IsA("Frame") then table.insert(currentFrames, v) end
+                -- 60s overflow guard
+                local startT = tick()
+                while tick() - startT < 60 and not KILL do
+                    local remaining = 60 - math.floor(tick() - startT)
+                    currentAction = "Gate: overflow guard (" .. remaining .. "s)"
+                    if frameCount > 4 then
+                        local f = getFrames()
+                        forceReject(f[math.random(1, #f)].Name)
                     end
-                    if #currentFrames > 4 then
-                        print("[GATE] Overflow during guard! Rejecting...")
-                        currentAction = "Gate: rejecting overflow in guard"
-                        forceReject(currentFrames[math.random(1, #currentFrames)].Name)
-                        currentAction = "Gate: overflow guard (" .. remaining .. "s left)"
-                    end
+                    task.wait(0.3)  -- was 0.5
                 end
-                break -- exit gate loop, proceed to completion
+                break
             end
         end
     end
     if KILL then break end
 
-    -- Phase 3: Finalize & Next Account
-    print("[GATE] 🛡️ VERIFIED: signaling complete.")
+    -- Phase 3: Finalize
     currentAction = "Signaling complete..."
-    ws:Send(HttpService:JSONEncode({ type = "complete" }))
-    task.wait(2)
-    
+    if ws then ws:Send(HttpService:JSONEncode({ type = "complete" })) end
+    task.wait(1)  -- was 2
+
     currentAction = "✅ Intentional completion - kicking"
     INTENTIONAL_KICK = true
-    
     if ws then
         pcall(function()
             ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
@@ -642,8 +542,7 @@ while not KILL do
         end)
         ws = nil
     end
-    
-    task.wait(1)
+    task.wait(0.5)
     player:Kick("✅ Success - 4/4 Packages Verified")
     break
 end
