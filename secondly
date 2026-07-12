@@ -17,6 +17,24 @@ local GuiService  = game:GetService("GuiService")
 local TeleportService = game:GetService("TeleportService")
 local UserInputService = game:GetService("UserInputService")
 local player      = Players.LocalPlayer
+
+-- ===================== WAIT FOR LOADING SCREEN TO DISAPPEAR =====================
+local playerGui = player:WaitForChild("PlayerGui")
+local function waitForLoading()
+    local loadingGui = playerGui:FindFirstChild("LoadingGui")
+    if loadingGui then
+        print("[INFO] Waiting for LoadingGui to disappear...")
+        loadingGui:GetPropertyChangedSignal("Parent"):Wait()
+        while loadingGui.Parent do task.wait(0.05) end
+        print("[INFO] Loading GUI disappeared → verifying 5s stable")
+        task.wait(5)
+    else
+        print("[INFO] No LoadingGui found → assuming already loaded")
+    end
+    print("[INFO] Game fully loaded")
+end
+waitForLoading()  -- <-- critical addition
+
 local WS_URL      = "ws://localhost:8080"
 local ws          = nil
 
@@ -82,7 +100,7 @@ end)
 -- =============================================
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
-local scrollingFrame = player:WaitForChild("PlayerGui"):WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus"):WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
+local scrollingFrame = playerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus"):WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
 local rejectId = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
 local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
 
@@ -544,7 +562,7 @@ while not KILL do
     currentAction = "Collected " .. TARGET .. " packages, stopping generation"
     ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" }))
 
-    -- Phase 2: FINAL GATE (now with FAILS check)
+    -- Phase 2: FINAL GATE (with FAILS check)
     print("[GATE] Waiting for DUPE_FLAG == true...")
     currentAction = "Gate: awaiting dupe flag"
     while not KILL do
@@ -571,7 +589,6 @@ while not KILL do
                 print("[GATE] 4/4 confirmed. Waiting for FAILS to clear...")
                 currentAction = "Waiting for FAILS to clear... (#" .. #FAILS .. ")"
                 while not KILL and #FAILS > 0 do
-                    -- Keep rejecting overflows if any appear
                     local currentFrames = {}
                     for _, v in ipairs(scrollingFrame:GetChildren()) do
                         if v:IsA("Frame") then table.insert(currentFrames, v) end
