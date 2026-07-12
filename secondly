@@ -109,7 +109,7 @@ local function forceReject(frameName)
     currentAction = "Idle"
 end
 
--- ===================== NAME EXTRACTION =====================
+-- ===================== NAME EXTRACTION (FIXED) =====================
 local function getFrameSender(frame)
     if not frame or not frame:IsA("Frame") then return "unknown" end
 
@@ -117,24 +117,15 @@ local function getFrameSender(frame)
     if not pkg then return "unknown" end
 
     local from = pkg:FindFirstChild("From")
-    if from and from:IsA("TextLabel") and from.Text and from.Text ~= "" then
-        local txt = from.Text:gsub("@",""):lower()
-        if txt ~= "" and txt ~= "unknown" then
+    if from and from:IsA("TextLabel") then
+        local txt = from.Text or ""
+        txt = txt:gsub("@",""):lower()
+        if txt ~= "" then
             return txt
         end
     end
 
-    local msg = pkg:FindFirstChild("Message")
-    if msg and msg:IsA("TextLabel") and msg.Text and msg.Text ~= "" then
-        return msg.Text
-    end
-
-    for _, d in ipairs(pkg:GetDescendants()) do
-        if d:IsA("TextLabel") and d.Text and d.Text ~= "" then
-            return d.Text
-        end
-    end
-
+    -- No fallback to Message or other labels – sender is ONLY from "From"
     return "unknown"
 end
 
@@ -175,10 +166,10 @@ end
 -- ===================== MEANINGFUL TEXT CHECK =====================
 local function hasAlnum(str)
     if not str then return false end
-    return str:match("%w") ~= nil  -- any alphanumeric character
+    return str:match("%w") ~= nil
 end
 
--- ===================== CORRUPT PACKAGE DETECTOR (runs independently) =====================
+-- ===================== CORRUPT PACKAGE DETECTOR =====================
 local function checkCorruptPackages()
     if KILL then return end
     for _, frame in ipairs(scrollingFrame:GetChildren()) do
@@ -362,11 +353,9 @@ local function createGui()
     reloadBtn.MouseButton1Click:Connect(function()
         print("[RELOAD] Reloading script from GitHub...")
         KILL = true
-        task.wait(0.5)  -- Allow loops to stop
-        -- Destroy the old GUI
+        task.wait(0.5)
         local oldGui = CoreGui:FindFirstChild("AutomatorUI")
         if oldGui then oldGui:Destroy() end
-        -- Load the new script
         loadstring(game:HttpGet("https://raw.githubusercontent.com/haxer321/banana/refs/heads/main/secondly"))()
     end)
 
