@@ -109,7 +109,7 @@ local function forceReject(frameName)
     currentAction = "Idle"
 end
 
--- ===================== NAME EXTRACTION (FIXED) =====================
+-- ===================== NAME EXTRACTION (STRICTLY FROM "From" label) =====================
 local function getFrameSender(frame)
     if not frame or not frame:IsA("Frame") then return "unknown" end
 
@@ -125,7 +125,7 @@ local function getFrameSender(frame)
         end
     end
 
-    -- No fallback to Message or other labels – sender is ONLY from "From"
+    -- No fallback – sender is ONLY from "From"
     return "unknown"
 end
 
@@ -169,7 +169,7 @@ local function hasAlnum(str)
     return str:match("%w") ~= nil
 end
 
--- ===================== CORRUPT PACKAGE DETECTOR =====================
+-- ===================== CORRUPT PACKAGE DETECTOR (runs independently) =====================
 local function checkCorruptPackages()
     if KILL then return end
     for _, frame in ipairs(scrollingFrame:GetChildren()) do
@@ -222,12 +222,29 @@ local function processSmartFails()
         if not hasAlnum(senderLower) then senderLower = "unknown" end
         local msgHasAlnum = hasAlnum(msgStripped)
 
+        -- 1) Corrupt: sender unknown & message has no alnum
         if senderLower == "unknown" and not msgHasAlnum then
             print("[CORRUPT] Rejected corrupt package (no alnum) - redundant")
             forceReject(frame.Name)
             continue
         end
 
+        -- 2) If sender is unknown, check if message contains a fail name
+        if senderLower == "unknown" then
+            local matched = findFailsInText(message, unresolved)
+            if matched then
+                print("[UNKNOWN SENDER] Rejected @Unknown package whose message contains fail: " .. matched)
+                currentAction = "Rejecting @Unknown with message containing: " .. matched
+                forceReject(frame.Name)
+                blockedUsers[matched] = true
+                failTimestamps[matched] = nil
+                unresolved[matched] = nil
+                currentAction = "Idle"
+                continue
+            end
+        end
+
+        -- 3) Direct sender match
         if unresolved[senderLower] then
             currentAction = "Rejecting failed sender: @" .. senderLower
             forceReject(frame.Name)
@@ -235,21 +252,28 @@ local function processSmartFails()
             failTimestamps[senderLower] = nil
             unresolved[senderLower] = nil
             currentAction = "Idle"
-        else
-            local matched = findFailsInText(sender, unresolved)
-            if matched then
-                currentAction = "Rejecting via sender scan: @" .. matched
-                forceReject(frame.Name)
-                blockedUsers[matched] = true
-                failTimestamps[matched] = nil
-                unresolved[matched] = nil
-                currentAction = "Idle"
-            elseif senderLower:find("unknown") then
-                table.insert(unknownFrames, frame)
-            end
+            continue
+        end
+
+        -- 4) Sender text contains fail name (fallback)
+        local matched = findFailsInText(sender, unresolved)
+        if matched then
+            currentAction = "Rejecting via sender scan: @" .. matched
+            forceReject(frame.Name)
+            blockedUsers[matched] = true
+            failTimestamps[matched] = nil
+            unresolved[matched] = nil
+            currentAction = "Idle"
+            continue
+        end
+
+        -- 5) If sender contains "unknown" (but not a fail), add to fallback list
+        if senderLower:find("unknown") then
+            table.insert(unknownFrames, frame)
         end
     end
 
+    -- 6) 60‑second fallback for unresolved fails
     for badUser, start in pairs(failTimestamps) do
         if now - start > 60 and #unknownFrames > 0 then
             print("[FALLBACK] Rejecting unknown for " .. badUser)
