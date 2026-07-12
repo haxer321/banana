@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — FAST REJECT EDITION
+-- 📡 ANDROID AUTOMATOR — FAST REJECT EDITION (FIXED)
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -133,24 +133,30 @@ scrollingFrame.ChildRemoved:Connect(function(c)
 end)
 
 -- =============================================
--- ⚡ PERSISTENT REJECT (Fire -> Wait 4s -> Rescan -> Repeat)
+-- ⚡ FIXED: PERSISTENT REJECT (fires until gone)
 -- =============================================
-local function forceReject(frameName)
-    if KILL then return end
-    print("[FORCE] Rejecting -> wait 4s -> rescan, until gone: " .. frameName)
+local function forceReject(frame)
+    if KILL or not frame or not frame.Parent then return false end
+    local frameName = frame.Name
+    print("[FORCE] Rejecting -> wait 1s → rescan until gone: ", frameName)
     currentAction = "Rejecting: " .. frameName
     local rejectArgs = { { rejectId, rejectStr, frameName } }
-    
-    -- 1. Rescan frame via the while loop condition
-    -- 2. Fire the remote
-    -- 3. Wait 4 seconds
-    -- 4. Loop back to step 1 if it's still there
-    while not KILL and frameCache[frameName] do
+
+    local attempts = 0
+    while not KILL and frame.Parent do
         pcall(function() remote:FireServer(rejectArgs) end)
-        task.wait(4)
+        task.wait(1)  -- give game time to process
+        attempts = attempts + 1
+        if attempts > 30 then break end  -- safety limit
     end
-    
-    currentAction = "Idle"
+
+    if frame.Parent then
+        print("[FORCE] Failed to remove frame after 30 attempts: ", frameName)
+        return false
+    else
+        print("[FORCE] Successfully removed frame: ", frameName)
+        return true
+    end
 end
 
 -- =============================================
@@ -206,7 +212,7 @@ local function hasAlnum(str)
 end
 
 -- =============================================
--- ⚡ INSTANT FAIL PROCESSOR (triggered on data_update)
+-- ⚡ FIXED: INSTANT FAIL PROCESSOR (scans live children)
 -- =============================================
 local function processFailsNow()
     if KILL or #FAILS == 0 then return end
@@ -221,67 +227,76 @@ local function processFailsNow()
     end
     if next(unresolved) == nil then return end
 
+    -- Scan live frames directly (no cache)
+    local frames = scrollingFrame:GetChildren()
     local unknownFrames = {}
-    for _, frame in ipairs(getFrames()) do
-        local sender = getFrameSender(frame)
-        local message = getFrameMessage(frame)
-        local senderStripped = stripInvisible(sender)
-        local msgStripped = stripInvisible(message)
-        local senderLower = (senderStripped or ""):gsub("@",""):lower()
-        if not hasAlnum(senderLower) then senderLower = "unknown" end
-        local msgHasAlnum = hasAlnum(msgStripped)
 
-        -- 1) Corrupt
+    for _, frame in ipairs(frames) do
+        if not frame:IsA("Frame") then continue end
+        local sender = stripInvisible(getFrameSender(frame))
+        local message = stripInvisible(getFrameMessage(frame))
+        local senderLower = (sender:gsub("@",""):lower())
+        if not hasAlnum(senderLower) then senderLower = "unknown" end
+        local msgHasAlnum = hasAlnum(message)
+
+        -- Corrupt frame
         if senderLower == "unknown" and not msgHasAlnum then
-            forceReject(frame.Name)
+            if forceReject(frame) then
+                -- no blocking needed here
+            end
             continue
         end
 
-        -- 2) Unknown sender + message contains fail name
+        -- Unknown sender but message contains a fail name
         if senderLower == "unknown" then
             local matched = findFailsInText(message, unresolved)
             if matched then
-                forceReject(frame.Name)
-                blockedUsers[matched] = true
-                failTimestamps[matched] = nil
-                unresolved[matched] = nil
+                if forceReject(frame) then
+                    blockedUsers[matched] = true
+                    failTimestamps[matched] = nil
+                    unresolved[matched] = nil
+                end
                 continue
             end
         end
 
-        -- 3) Direct sender match
+        -- Direct sender match
         if unresolved[senderLower] then
-            forceReject(frame.Name)
-            blockedUsers[senderLower] = true
-            failTimestamps[senderLower] = nil
-            unresolved[senderLower] = nil
+            if forceReject(frame) then
+                blockedUsers[senderLower] = true
+                failTimestamps[senderLower] = nil
+                unresolved[senderLower] = nil
+            end
             continue
         end
 
-        -- 4) Sender text contains fail name (fallback)
+        -- Sender text contains fail name
         local matched = findFailsInText(sender, unresolved)
         if matched then
-            forceReject(frame.Name)
-            blockedUsers[matched] = true
-            failTimestamps[matched] = nil
-            unresolved[matched] = nil
+            if forceReject(frame) then
+                blockedUsers[matched] = true
+                failTimestamps[matched] = nil
+                unresolved[matched] = nil
+            end
             continue
         end
 
-        -- 5) Unknown frames for 60s fallback
+        -- Collect unknown frames for 30s fallback
         if senderLower:find("unknown") then
             table.insert(unknownFrames, frame)
         end
     end
 
-    -- 6) 60s fallback
+    -- 30s fallback (reduced from 60)
     for badUser, startT in pairs(failTimestamps) do
-        if now - startT > 60 and #unknownFrames > 0 then
+        if now - startT > 30 and #unknownFrames > 0 then
             print("[FALLBACK] Rejecting unknown for " .. badUser)
-            forceReject(unknownFrames[1].Name)
-            blockedUsers[badUser] = true
-            failTimestamps[badUser] = nil
-            table.remove(unknownFrames, 1)
+            local frame = unknownFrames[1]
+            if forceReject(frame) then
+                blockedUsers[badUser] = true
+                failTimestamps[badUser] = nil
+                table.remove(unknownFrames, 1)
+            end
         end
     end
 end
@@ -289,13 +304,15 @@ end
 -- Background corrupt scanner (still useful but faster)
 task.spawn(function()
     while not KILL do
-        for _, frame in ipairs(getFrames()) do
-            local sender = stripInvisible(getFrameSender(frame))
-            local msg = stripInvisible(getFrameMessage(frame))
-            local sLower = sender:gsub("@",""):lower()
-            if not hasAlnum(sLower) then sLower = "unknown" end
-            if sLower == "unknown" and not hasAlnum(msg) then
-                forceReject(frame.Name)
+        for _, frame in ipairs(scrollingFrame:GetChildren()) do
+            if frame:IsA("Frame") then
+                local sender = stripInvisible(getFrameSender(frame))
+                local msg = stripInvisible(getFrameMessage(frame))
+                local sLower = sender:gsub("@",""):lower()
+                if not hasAlnum(sLower) then sLower = "unknown" end
+                if sLower == "unknown" and not hasAlnum(msg) then
+                    forceReject(frame)
+                end
             end
         end
         task.wait(0.25)  -- was 0.5
@@ -500,7 +517,7 @@ while not KILL do
                 if ws then ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" })) end
             elseif frameCount > 4 then
                 local frames = getFrames()
-                forceReject(frames[math.random(1, #frames)].Name)
+                forceReject(frames[math.random(1, #frames)])
                 currentAction = "Gate: awaiting dupe flag"
             else
                 -- 4 confirmed, wait for FAILS to clear
@@ -508,7 +525,7 @@ while not KILL do
                 while not KILL and #FAILS > 0 do
                     if frameCount > 4 then
                         local f = getFrames()
-                        forceReject(f[math.random(1, #f)].Name)
+                        forceReject(f[math.random(1, #f)])
                     end
                     currentAction = "Waiting for FAILS to clear... (#" .. #FAILS .. ")"
                     task.wait(0.3)  -- was 1
@@ -522,7 +539,7 @@ while not KILL do
                     currentAction = "Gate: overflow guard (" .. remaining .. "s)"
                     if frameCount > 4 then
                         local f = getFrames()
-                        forceReject(f[math.random(1, #f)].Name)
+                        forceReject(f[math.random(1, #f)])
                     end
                     task.wait(0.3)  -- was 0.5
                 end
