@@ -133,19 +133,20 @@ scrollingFrame.ChildRemoved:Connect(function(c)
 end)
 
 -- =============================================
--- ⚡ FAST REJECT (tight loop, no re-iteration)
+-- ⚡ PERSISTENT REJECT (1/sec, never stops until gone)
 -- =============================================
 local function forceReject(frameName)
     if KILL then return end
-    print("[FORCE] Spaming reject for: " .. frameName)
+    print("[FORCE] Rejecting 1/sec until gone: " .. frameName)
     currentAction = "Rejecting: " .. frameName
     local rejectArgs = { { rejectId, rejectStr, frameName } }
-    -- Hard cap 1.2s of spamming so it never blocks the pipeline too long
-    local startT = os.clock()
-    while not KILL and frameCache[frameName] and os.clock() - startT < 1.2 do
+    
+    -- Loop forever until the frame is gone from the cache
+    while not KILL and frameCache[frameName] do
         pcall(function() remote:FireServer(rejectArgs) end)
-        task.wait(0.02)  -- was 0.05, halved
+        task.wait(1) -- exactly 1 time per second
     end
+    
     currentAction = "Idle"
 end
 
