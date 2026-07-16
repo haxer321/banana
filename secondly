@@ -89,7 +89,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
 local scrollingFrame = playerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus"):WaitForChild("ReceivePackages"):WaitForChild("ScrollingFrame")
 local rejectId = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RF_9ff1f197bac1aed0e111d8b6c30732ea1a98d77594aa860e7ec9dae51fc194e5_S").Value
-local rejectStr = "\175+\190\168z\137N\150\168}\161C\201\240\178\204"
+local rejectStr = "\186\255\146\244\250\020C\129\181T\172_|\127\006\232"
 
 local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba").Value
 local initFired = false
