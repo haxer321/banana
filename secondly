@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — VIM REJECTION EDITION
+-- 📡 ANDROID AUTOMATOR — FIXED VIM EDITION
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -33,40 +33,32 @@ waitForLoading()
 -- ===================== REMOVE DISRUPTING FRAMES =====================
 local function cleanupDisruptingUIs()
     print("[CLEANUP] Removing disrupting UI frames...")
-    
-    local maxRetries = 5
-    local retryCount = 0
-    while retryCount < maxRetries do
+    for i = 1, 5 do
         local mainFrames = playerGui:FindFirstChild("MainFrames")
         if mainFrames then
             local notifFrame = mainFrames:FindFirstChild("NotificationFrame")
             if notifFrame then
-                print("[CLEANUP] Attempting to delete NotificationFrame (attempt " .. retryCount + 1 .. "/" .. maxRetries .. ")")
                 pcall(function() notifFrame:Destroy() end)
                 task.wait(0.2)
                 if not notifFrame.Parent then
-                    print("[CLEANUP] ✅ NotificationFrame successfully deleted")
+                    print("[CLEANUP] ✅ NotificationFrame deleted")
                     return
                 end
             else
-                print("[CLEANUP] ✅ NotificationFrame not found (already deleted)")
+                print("[CLEANUP] ✅ NotificationFrame not found")
                 return
             end
         else
-            print("[CLEANUP] MainFrames not found")
             return
         end
-        retryCount = retryCount + 1
         task.wait(0.5)
     end
-    print("[CLEANUP] ⚠️ Failed to delete NotificationFrame after retries")
 end
 cleanupDisruptingUIs()
 
 -- ===================== G KEY CONSOLE LISTENER =====================
 UserInputService.InputBegan:Connect(function(input, gp)
     if not gp and input.KeyCode == Enum.KeyCode.G then
-        print("[HOTKEY] G pressed - opening console...")
         pcall(function()
             VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.F9, false, game)
             task.wait(0.05)
@@ -83,13 +75,10 @@ local TARGET       = 4
 local FAILS        = {}
 local DUPE_FLAG    = false
 local CHECK_FLAG   = true
-local FAILS_COUNT  = 0
-local PACKAGE_GEMS = 2500000
 local TELEPORT     = CFrame.new(-460, 244, -67)
 local currentAction = "Idle"
 
-local blockedUsers   = {}
-local failTimestamps = {}
+local blockedUsers = {}
 
 -- =============================================
 -- ⚡ KILL SWITCH
@@ -100,7 +89,7 @@ local INTENTIONAL_KICK = false
 local function killEverythingAndRejoin()
     if KILL then return end
     KILL = true
-    currentAction = "KILL: Unexpected kick - rejoining..."
+    currentAction = "KILL: Rejoining..."
     if ws then
         pcall(function()
             ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
@@ -111,12 +100,12 @@ local function killEverythingAndRejoin()
     task.wait(1)
     pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
     task.wait(2)
-    if not KILL then player:Kick("Unexpected error - rejoin attempted") end
+    player:Kick("Rejoin attempted")
 end
 
-GuiService.ErrorMessageChanged:Connect(function(errorMessage)
-    if errorMessage and errorMessage ~= "" and not KILL and not INTENTIONAL_KICK then
-        print("[ERROR] Unexpected error: " .. errorMessage)
+GuiService.ErrorMessageChanged:Connect(function(msg)
+    if msg and msg ~= "" and not KILL and not INTENTIONAL_KICK then
+        print("[ERROR] " .. msg)
         killEverythingAndRejoin()
     end
 end)
@@ -141,136 +130,205 @@ local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):Wa
 local initFired = false
 
 -- =============================================
--- ⚡ VIM REJECTION SYSTEM (with verification)
+-- ⚡ BRUTE FORCE CLICK SYSTEM
 -- =============================================
-local REJECT_COOLDOWN = 5  -- 5 seconds after frame disappears
-
--- Helper: get Deny button
 local function getDenyButton(frame)
-    if not frame or not frame:IsA("Frame") then return nil end
+    if not frame or not frame.Parent then return nil end
     local pkg = frame:FindFirstChild("Package")
     if not pkg then return nil end
     local options = pkg:FindFirstChild("Options")
     if not options then return nil end
     local denyBtn = options:FindFirstChild("Deny")
-    if not denyBtn or not denyBtn:IsA("TextButton") then return nil end
-    return denyBtn
+    if denyBtn and denyBtn:IsA("TextButton") and denyBtn.Parent then
+        return denyBtn
+    end
+    return nil
 end
 
--- Core rejection function: returns success, and the time when frame was considered gone (or timeout)
-local function rejectFrameVIM(frame)
-    if not frame or not frame.Parent then
-        -- Frame already gone; return success with current time (no wait needed)
-        return true, tick()
-    end
+-- Aggressive click that tries EVERYTHING
+local function bruteForceClick(btn)
+    if not btn or not btn.Parent then return false end
     
-    local denyButton = getDenyButton(frame)
-    if not denyButton then
-        print("[REJECT] Deny button not found for frame: " .. frame.Name)
-        return false, tick()
-    end
+    -- Method 1: Direct fire
+    pcall(function()
+        btn.MouseButton1Click:Fire()
+    end)
+    task.wait(0.05)
     
-    currentAction = "Clicking Deny on " .. frame.Name
-    print("[REJECT] Clicking Deny for frame: " .. frame.Name)
+    -- Method 2: Activate
+    pcall(function()
+        btn:Activate()
+    end)
+    task.wait(0.05)
     
-    local clickFired = false
-    local connection = denyButton.Activated:Connect(function()
-        clickFired = true
-        print("[REJECT] ✅ Activated event confirmed!")
+    -- Method 3: Select + Enter
+    pcall(function()
+        GuiService.SelectedObject = btn
+        task.wait(0.03)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
+        task.wait(0.02)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+    end)
+    task.wait(0.05)
+    
+    -- Method 4: Select + Space
+    pcall(function()
+        GuiService.SelectedObject = btn
+        task.wait(0.03)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+        task.wait(0.02)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+    end)
+    task.wait(0.05)
+    
+    -- Method 5: Mouse click at center
+    pcall(function()
+        local pos = btn.AbsolutePosition
+        local size = btn.AbsoluteSize
+        local x = pos.X + size.X / 2
+        local y = pos.Y + size.Y / 2
+        VirtualInputManager:SendMouseMovementEvent(x, y, game)
+        task.wait(0.02)
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game)
+        task.wait(0.02)
+        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game)
+    end)
+    task.wait(0.05)
+    
+    -- Method 6: Gamepad A
+    pcall(function()
+        GuiService.SelectedObject = btn
+        task.wait(0.03)
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonA, false, game)
+        task.wait(0.02)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonA, false, game)
     end)
     
-    GuiService.SelectedObject = denyButton
-    task.wait(0.05)
-    
-    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
-    task.wait(0.05)
-    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
-    
-    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonA, false, game)
-    task.wait(0.05)
-    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonA, false, game)
-    
-    local clickWaitStart = tick()
-    while not clickFired and tick() - clickWaitStart < 2 do
-        task.wait(0.05)
-    end
-    connection:Disconnect()
-    
-    if not clickFired then
-        print("[REJECT] ⚠️ Click verification failed - button.Activated didn't fire")
-    end
-    
-    -- Wait for the frame to disappear (up to 10 seconds)
-    print("[REJECT] Waiting for frame to disappear...")
-    local startWait = tick()
-    local timeout = 10
-    while frame.Parent and tick() - startWait < timeout do
-        task.wait(0.1)
-    end
-    
-    local gone = not frame.Parent
-    local endTime = tick()  -- time when we stop waiting
-    
-    if gone then
-        print("[REJECT] ✅ Frame successfully removed after " .. string.format("%.2f", endTime - startWait) .. "s")
-        return true, endTime
-    else
-        print("[REJECT] ❌ Frame still present after timeout")
-        return false, endTime
-    end
+    return true
 end
 
 -- =============================================
--- ⚡ REJECTION QUEUE (one frame at a time, with 5s wait after disappearance)
+-- ⚡ SIMPLIFIED QUEUE - ONE AT A TIME, NO BS
 -- =============================================
 local rejectQueue = {}
-local isProcessing = false
-local lastDoneTime = 0  -- time when the last frame was finished (disappeared or timeout)
+local processingFrame = nil
+local lastRejectTime = 0
+local COOLDOWN = 2.5
 
-local function processRejectQueue()
-    if isProcessing then return end
-    isProcessing = true
-    task.spawn(function()
-        while #rejectQueue > 0 and not KILL do
-            local frame = table.remove(rejectQueue, 1)
-            if frame and frame.Parent then
-                -- Wait until cooldown from previous frame's done time is satisfied
-                local now = tick()
-                local timeSinceDone = now - lastDoneTime
-                if timeSinceDone < REJECT_COOLDOWN then
-                    local waitTime = REJECT_COOLDOWN - timeSinceDone
-                    print(string.format("[QUEUE] Waiting %.2fs before next rejection (cooldown)", waitTime))
-                    task.wait(waitTime)
-                end
-                
-                -- Perform rejection
-                local success, doneTime = rejectFrameVIM(frame)
-                if success then
-                    print("[QUEUE] Rejection successful")
-                else
-                    print("[QUEUE] Rejection failed")
-                end
-                lastDoneTime = doneTime  -- record when this frame finished (disappeared or timeout)
-            else
-                -- Frame already gone; treat as done now
-                print("[QUEUE] Frame no longer exists, skipping")
-                lastDoneTime = tick()
+local function processNextInQueue()
+    if processingFrame or KILL then return end
+    
+    -- Find next valid frame
+    local frameToProcess = nil
+    local frameIndex = nil
+    
+    for i, f in ipairs(rejectQueue) do
+        if f and f.Parent then
+            frameToProcess = f
+            frameIndex = i
+            break
+        end
+    end
+    
+    if not frameToProcess then
+        -- Clear invalid entries
+        rejectQueue = {}
+        return
+    end
+    
+    -- Remove from queue
+    table.remove(rejectQueue, frameIndex)
+    
+    -- Wait for cooldown
+    local now = tick()
+    local waitTime = COOLDOWN - (now - lastRejectTime)
+    if waitTime > 0 then
+        task.wait(waitTime)
+    end
+    
+    if KILL then return end
+    if not frameToProcess.Parent then return end
+    
+    processingFrame = frameToProcess
+    currentAction = "Rejecting: " .. frameToProcess.Name
+    print("[REJECT] Start: " .. frameToProcess.Name)
+    
+    -- Get button
+    local denyBtn = getDenyButton(frameToProcess)
+    if not denyBtn then
+        print("[REJECT] No button found")
+        processingFrame = nil
+        return
+    end
+    
+    -- BRUTE FORCE CLICK
+    bruteForceClick(denyBtn)
+    
+    -- Wait and verify
+    local startTime = tick()
+    local maxWait = 6
+    
+    while frameToProcess.Parent and (tick() - startTime) < maxWait do
+        task.wait(0.15)
+        
+        -- If still there after 1 second, click again aggressively
+        if frameToProcess.Parent and (tick() - startTime) > 1 then
+            denyBtn = getDenyButton(frameToProcess)
+            if denyBtn then
+                bruteForceClick(denyBtn)
             end
         end
-        isProcessing = false
-    end)
+        
+        -- If still there after 3 seconds, click again
+        if frameToProcess.Parent and (tick() - startTime) > 3 then
+            denyBtn = getDenyButton(frameToProcess)
+            if denyBtn then
+                bruteForceClick(denyBtn)
+            end
+        end
+    end
+    
+    local success = not frameToProcess.Parent
+    lastRejectTime = tick()
+    processingFrame = nil
+    
+    if success then
+        print("[REJECT] ✅ Done: " .. frameToProcess.Name)
+    else
+        print("[REJECT] ❌ Timeout: " .. frameToProcess.Name)
+    end
+    
+    currentAction = "Idle"
+    
+    -- Process next if any
+    task.wait(0.3)
+    if #rejectQueue > 0 and not KILL then
+        processNextInQueue()
+    end
 end
 
 local function enqueueReject(frame)
     if not frame or not frame.Parent then return end
+    
+    -- Don't add if already processing this frame
+    if processingFrame == frame then return end
+    
+    -- Don't add duplicates
+    for _, f in ipairs(rejectQueue) do
+        if f == frame then return end
+    end
+    
     table.insert(rejectQueue, frame)
-    if not isProcessing then
-        processRejectQueue()
+    print("[QUEUE] Added: " .. frame.Name .. " (queue: " .. #rejectQueue .. ")")
+    
+    -- Start processing if idle
+    if not processingFrame then
+        task.spawn(processNextInQueue)
     end
 end
 
 -- =============================================
--- ⚡ FAST FRAME CACHE (event-driven count)
+-- ⚡ FRAME CACHE
 -- =============================================
 local frameCache = {}
 local frameCount = 0
@@ -289,7 +347,11 @@ rebuildCache()
 
 local function getFrames()
     local out = {}
-    for _, f in pairs(frameCache) do table.insert(out, f) end
+    for _, f in pairs(frameCache) do
+        if f and f.Parent then
+            table.insert(out, f)
+        end
+    end
     return out
 end
 
@@ -299,31 +361,31 @@ scrollingFrame.ChildAdded:Connect(function(c)
         frameCount = frameCount + 1
     end
 end)
+
 scrollingFrame.ChildRemoved:Connect(function(c)
     if c:IsA("Frame") and frameCache[c.Name] then
         frameCache[c.Name] = nil
-        frameCount = frameCount - 1
-        if frameCount < 0 then frameCount = 0 end
+        frameCount = math.max(0, frameCount - 1)
     end
 end)
 
 -- =============================================
--- NAME / MESSAGE EXTRACTION
+-- TEXT HELPERS
 -- =============================================
 local function getFrameSender(frame)
-    if not frame or not frame:IsA("Frame") then return "unknown" end
+    if not frame or not frame.Parent then return "unknown" end
     local pkg = frame:FindFirstChild("Package")
     if not pkg then return "unknown" end
     local from = pkg:FindFirstChild("From")
     if from and from:IsA("TextLabel") then
-        local txt = from.Text or ""
-        txt = txt:gsub("@",""):lower()
+        local txt = (from.Text or ""):gsub("@",""):lower()
         if txt ~= "" then return txt end
     end
     return "unknown"
 end
 
 local function getFrameMessage(frame)
+    if not frame or not frame.Parent then return "" end
     local pkg = frame:FindFirstChild("Package")
     if not pkg then return "" end
     local msg = pkg:FindFirstChild("Message")
@@ -346,8 +408,8 @@ local function stripInvisible(str)
     if not str then return "" end
     local filtered = {}
     for i = 1, #str do
-        local byte = str:byte(i)
-        if byte >= 32 and byte <= 126 then
+        local b = str:byte(i)
+        if b >= 32 and b <= 126 then
             table.insert(filtered, str:sub(i, i))
         end
     end
@@ -360,86 +422,74 @@ local function hasAlnum(str)
 end
 
 -- =============================================
--- ⚡ VIM-AWARE FAIL PROCESSOR (enqueues one at a time)
+-- ⚡ FAIL PROCESSOR
 -- =============================================
-local function processFailsVIM()
-    pcall(function()
-        if KILL or #FAILS == 0 then return end
+local function processFails()
+    if KILL or #FAILS == 0 then return end
+    
+    local unresolved = {}
+    for _, user in ipairs(FAILS) do
+        local name = user:gsub("@",""):lower()
+        if name ~= "" and not blockedUsers[name] then
+            unresolved[name] = true
+        end
+    end
+    
+    if next(unresolved) == nil then return end
+    
+    for _, frame in ipairs(getFrames()) do
+        if not frame:IsA("Frame") then continue end
         
-        local now = os.clock()
-        local unresolved = {}
+        local sender = stripInvisible(getFrameSender(frame)):lower()
+        local message = stripInvisible(getFrameMessage(frame))
+        if not hasAlnum(sender) then sender = "unknown" end
         
-        for _, user in ipairs(FAILS) do
-            local name = user:gsub("@",""):lower()
-            if name ~= "" and not blockedUsers[name] then
-                unresolved[name] = true
-                if not failTimestamps[name] then failTimestamps[name] = now end
-            end
+        -- Corrupt
+        if sender == "unknown" and not hasAlnum(message) then
+            enqueueReject(frame)
+            return
         end
         
-        if next(unresolved) == nil then return end
-        
-        local frames = scrollingFrame:GetChildren()
-        
-        for _, frame in ipairs(frames) do
-            if not frame:IsA("Frame") then continue end
-            
-            local sender = stripInvisible(getFrameSender(frame))
-            local message = stripInvisible(getFrameMessage(frame))
-            local senderLower = (sender:gsub("@",""):lower())
-            if not hasAlnum(senderLower) then senderLower = "unknown" end
-            local msgHasAlnum = hasAlnum(message)
-            
-            -- Corrupt frame (unknown sender + no message content)
-            if senderLower == "unknown" and not msgHasAlnum then
-                enqueueReject(frame)
-                return  -- only enqueue one per call
-            end
-            
-            -- Unknown sender but message contains a fail name
-            if senderLower == "unknown" then
-                local matched = findFailsInText(message, unresolved)
-                if matched then
-                    enqueueReject(frame)
-                    blockedUsers[matched] = true
-                    return
-                end
-                continue
-            end
-            
-            -- Direct sender match
-            if unresolved[senderLower] then
-                enqueueReject(frame)
-                blockedUsers[senderLower] = true
-                failTimestamps[senderLower] = nil
-                return
-            end
-            
-            -- Sender text contains fail name
-            local matched = findFailsInText(sender, unresolved)
+        -- Unknown sender, check message
+        if sender == "unknown" then
+            local matched = findFailsInText(message, unresolved)
             if matched then
                 enqueueReject(frame)
                 blockedUsers[matched] = true
-                failTimestamps[matched] = nil
                 return
             end
+            continue
         end
-    end)
+        
+        -- Direct match
+        if unresolved[sender] then
+            enqueueReject(frame)
+            blockedUsers[sender] = true
+            return
+        end
+        
+        -- Partial match
+        local matched = findFailsInText(sender, unresolved)
+        if matched then
+            enqueueReject(frame)
+            blockedUsers[matched] = true
+            return
+        end
+    end
 end
 
--- Background corrupt scanner (enqueues one at a time)
+-- Background corrupt scanner
 task.spawn(function()
     while not KILL do
         pcall(function()
-            for _, frame in ipairs(scrollingFrame:GetChildren()) do
+            for _, frame in ipairs(getFrames()) do
                 if frame:IsA("Frame") then
-                    local sender = stripInvisible(getFrameSender(frame))
+                    local sender = stripInvisible(getFrameSender(frame)):lower()
                     local msg = stripInvisible(getFrameMessage(frame))
-                    local sLower = sender:gsub("@",""):lower()
-                    if not hasAlnum(sLower) then sLower = "unknown" end
-                    if sLower == "unknown" and not hasAlnum(msg) then
+                    if not hasAlnum(sender) then sender = "unknown" end
+                    if sender == "unknown" and not hasAlnum(msg) then
                         enqueueReject(frame)
-                        break  -- only enqueue one per scan
+                        break
                     end
                 end
             end
@@ -448,12 +498,10 @@ task.spawn(function()
     end
 end)
 
--- Backup pass every 0.5s for fails (also enqueues one at a time)
+-- Background fail processor
 task.spawn(function()
     while not KILL do
-        pcall(function()
-            processFailsVIM()
-        end)
+        pcall(processFails)
         task.wait(0.5)
     end
 end)
@@ -472,11 +520,11 @@ local function createGui()
     mainFrame.Position = UDim2.new(0.5, -210, 0.5, -120)
     mainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
     mainFrame.BackgroundTransparency = 0.3
-    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0,6)
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 6)
 
     local label = Instance.new("TextLabel", mainFrame)
     label.Size = UDim2.new(1, -10, 1, -50)
-    label.Position = UDim2.new(0,5,0,5)
+    label.Position = UDim2.new(0, 5, 0, 5)
     label.TextColor3 = Color3.new(0, 1, 0)
     label.TextScaled = true
     label.Font = Enum.Font.RobotoMono
@@ -494,7 +542,7 @@ local function createGui()
         b.Text = text
         b.Font = Enum.Font.SourceSans
         b.TextScaled = true
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0,4)
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
         return b
     end
 
@@ -503,26 +551,17 @@ local function createGui()
 
     local function dump()
         print("\n===== PACKAGE DUMP =====")
-        local count = 0
-        for _, frame in ipairs(getFrames()) do
-            count = count + 1
-            local sender = getFrameSender(frame)
-            local msg = getFrameMessage(frame)
-            local senderStripped = stripInvisible(sender)
-            local msgStripped = stripInvisible(msg)
-            local senderLower = (senderStripped or ""):gsub("@",""):lower()
-            local senderHasAlnum = hasAlnum(senderLower)
-            if not senderHasAlnum then senderLower = "unknown" end
-            local msgHasAlnum = hasAlnum(msgStripped)
-            local corrupt = (senderLower == "unknown" and not msgHasAlnum)
-            print(string.format(
-                "[%d] Frame: %s\n    Sender raw: '%s' (len=%d)\n    Message raw: '%s' (len=%d)\n    Sender stripped: '%s' hasAlnum? %s\n    Message stripped: '%s' hasAlnum? %s\n    Corrupt? %s",
-                count, frame.Name, sender, #sender, msg, #msg,
-                senderStripped, tostring(senderHasAlnum), msgStripped, tostring(msgHasAlnum), tostring(corrupt)
-            ))
+        for i, frame in ipairs(getFrames()) do
+            local sender = stripInvisible(getFrameSender(frame))
+            local msg = stripInvisible(getFrameMessage(frame))
+            local sLower = sender:lower()
+            if not hasAlnum(sLower) then sLower = "unknown" end
+            print(string.format("[%d] %s | Sender: %s | Msg: %s | Corrupt: %s",
+                i, frame.Name, sender, msg, tostring(sLower == "unknown" and not hasAlnum(msg))))
         end
         print("FAILS:", HttpService:JSONEncode(FAILS))
-        print("blockedUsers:", HttpService:JSONEncode(blockedUsers))
+        print("Blocked:", HttpService:JSONEncode(blockedUsers))
+        print("Queue:", #rejectQueue)
         print("=========================\n")
     end
 
@@ -532,7 +571,6 @@ local function createGui()
     end)
 
     reloadBtn.MouseButton1Click:Connect(function()
-        print("[RELOAD] Reloading...")
         KILL = true
         task.wait(0.3)
         local old = CoreGui:FindFirstChild("AutomatorUI")
@@ -565,30 +603,39 @@ end)
 local function connectWS()
     pcall(function()
         local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
-        if not ok or not socket then task.wait(3); return connectWS() end
+        if not ok or not socket then
+            task.wait(3)
+            if not KILL then connectWS() end
+            return
+        end
+        
         ws = socket
-        pcall(function()
-            ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
-        end)
+        ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
+        
         ws.OnMessage:Connect(function(msg)
             pcall(function()
-                local ok2, data = pcall(function() return HttpService:JSONDecode(msg) end)
-                if ok2 and data.type == "data_update" then
+                local data = HttpService:JSONDecode(msg)
+                if data.type == "data_update" then
                     TARGET = 4
                     local newFails = data.Fails or data.fails or {}
                     local dupeNow = (data.Dupe == true)
                     if dupeNow and not DUPE_FLAG then
-                        blockedUsers = {}; failTimestamps = {}
+                        blockedUsers = {}
                     end
                     DUPE_FLAG = dupeNow
                     CHECK_FLAG = (data.Check == true)
                     FAILS = newFails
-                    task.spawn(function() processFailsVIM() end)
+                    task.spawn(processFails)
                 end
             end)
         end)
+        
         ws.OnClose:Connect(function()
-            if not KILL then task.wait(2); connectWS() end
+            ws = nil
+            if not KILL then
+                task.wait(2)
+                connectWS()
+            end
         end)
     end)
 end
@@ -597,10 +644,8 @@ task.spawn(function()
     while not KILL do
         pcall(function()
             if ws then
-                pcall(function()
-                    ws:Send(HttpService:JSONEncode({type="heartbeat",user=player.Name}))
-                    ws:Send(HttpService:JSONEncode({type="get_data"}))
-                end)
+                ws:Send(HttpService:JSONEncode({ type = "heartbeat", user = player.Name }))
+                ws:Send(HttpService:JSONEncode({ type = "get_data" }))
             end
         end)
         task.wait(7)
@@ -616,75 +661,68 @@ connectWS()
 while not KILL do
     pcall(function()
         task.wait(0.5)
+        
         local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
         if hrp then
             hrp.CFrame = TELEPORT
             if not initFired then
                 currentAction = "Initializing post office"
-                pcall(function() remote:FireServer({ { initIdentifier } }) end)
+                remote:FireServer({ { initIdentifier } })
                 initFired = true
             end
         end
 
-        if TARGET <= 0 then return end
-        if KILL then return end
+        if TARGET <= 0 or KILL then return end
 
         -- Phase 1: Accumulation
-        currentAction = "Collecting packages: 0/" .. TARGET
         while not KILL do
             if frameCount >= TARGET then break end
-            currentAction = "Collecting packages: " .. frameCount .. "/" .. TARGET
-            if ws then
-                pcall(function() ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" })) end)
-            end
+            currentAction = "Collecting: " .. frameCount .. "/" .. TARGET
+            if ws then ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" })) end
             task.wait(0.3)
         end
         if KILL then return end
 
-        currentAction = "Collected " .. TARGET .. ", stopping generation"
-        if ws then
-            pcall(function() ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" })) end)
-        end
+        currentAction = "Stopping generation"
+        if ws then ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" })) end
 
         -- Phase 2: GATE
-        currentAction = "Gate: awaiting dupe flag"
+        currentAction = "Gate: waiting for dupe"
+        
         while not KILL do
-            if ws then pcall(function() ws:Send(HttpService:JSONEncode({ type = "get_data" })) end) end
+            if ws then ws:Send(HttpService:JSONEncode({ type = "get_data" })) end
             task.wait(0.3)
 
             if DUPE_FLAG == true then
                 if frameCount < 4 then
-                    currentAction = "Gate: count <4, restarting"
-                    if ws then pcall(function() ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" })) end) end
+                    currentAction = "Gate: under 4, collecting"
+                    if ws then ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" })) end
                 elseif frameCount > 4 then
                     local frames = getFrames()
                     if #frames > 0 then
                         enqueueReject(frames[math.random(1, #frames)])
                     end
-                    currentAction = "Gate: awaiting dupe flag"
                 else
-                    currentAction = "Waiting for FAILS to clear... (#" .. #FAILS .. ")"
+                    -- Exactly 4, wait for fails to clear
+                    currentAction = "Waiting fails (" .. #FAILS .. ")"
                     while not KILL and #FAILS > 0 do
                         if frameCount > 4 then
                             local f = getFrames()
-                            if #f > 0 then
-                                enqueueReject(f[math.random(1, #f)])
-                            end
+                            if #f > 0 then enqueueReject(f[math.random(1, #f)]) end
                         end
-                        currentAction = "Waiting for FAILS to clear... (#" .. #FAILS .. ")"
+                        currentAction = "Waiting fails (" .. #FAILS .. ")"
                         task.wait(0.3)
                     end
                     if KILL then return end
 
+                    -- Overflow guard
                     local startT = tick()
                     while tick() - startT < 60 and not KILL do
                         local remaining = 60 - math.floor(tick() - startT)
-                        currentAction = "Gate: overflow guard (" .. remaining .. "s)"
+                        currentAction = "Guard (" .. remaining .. "s)"
                         if frameCount > 4 then
                             local f = getFrames()
-                            if #f > 0 then
-                                enqueueReject(f[math.random(1, #f)])
-                            end
+                            if #f > 0 then enqueueReject(f[math.random(1, #f)]) end
                         end
                         task.wait(0.3)
                     end
@@ -694,22 +732,20 @@ while not KILL do
         end
         if KILL then return end
 
-        -- Phase 3: Finalize
-        currentAction = "Signaling complete..."
-        if ws then pcall(function() ws:Send(HttpService:JSONEncode({ type = "complete" })) end) end
+        -- Phase 3: Complete
+        currentAction = "Completing..."
+        if ws then ws:Send(HttpService:JSONEncode({ type = "complete" })) end
         task.wait(1)
 
-        currentAction = "✅ Intentional completion - kicking"
+        currentAction = "✅ Done - kicking"
         INTENTIONAL_KICK = true
         if ws then
-            pcall(function()
-                ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
-                ws:Close()
-            end)
+            ws:Send(HttpService:JSONEncode({ type = "heartbeat_stop", user = player.Name }))
+            ws:Close()
             ws = nil
         end
         task.wait(0.5)
-        pcall(function() player:Kick("✅ Success - 4/4 Packages Verified") end)
+        player:Kick("✅ Success - 4/4 Packages")
     end)
     
     if KILL then break end
