@@ -34,7 +34,6 @@ waitForLoading()
 local function cleanupDisruptingUIs()
     print("[CLEANUP] Removing disrupting UI frames...")
     
-    -- Delete NotificationFrame with retries
     local maxRetries = 5
     local retryCount = 0
     while retryCount < maxRetries do
@@ -45,8 +44,6 @@ local function cleanupDisruptingUIs()
                 print("[CLEANUP] Attempting to delete NotificationFrame (attempt " .. retryCount + 1 .. "/" .. maxRetries .. ")")
                 pcall(function() notifFrame:Destroy() end)
                 task.wait(0.2)
-                
-                -- Verify it's gone
                 if not notifFrame.Parent then
                     print("[CLEANUP] ✅ NotificationFrame successfully deleted")
                     return
@@ -71,7 +68,6 @@ UserInputService.InputBegan:Connect(function(input, gp)
     if not gp and input.KeyCode == Enum.KeyCode.G then
         print("[HOTKEY] G pressed - opening console...")
         pcall(function()
-            -- Press F9 to open Roblox console
             VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.F9, false, game)
             task.wait(0.05)
             VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.F9, false, game)
@@ -139,7 +135,6 @@ local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChil
 local receivePackagesGui = playerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus"):WaitForChild("ReceivePackages")
 local scrollingFrame = receivePackagesGui:WaitForChild("ScrollingFrame")
 
--- Make GUI visible for VIM interaction
 receivePackagesGui.Visible = true
 
 local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba").Value
@@ -151,6 +146,7 @@ local initFired = false
 local lastRejectTime = 0
 local REJECT_COOLDOWN = 5  -- 5 second cooldown per rejection
 
+-- Helper: get Deny button
 local function getDenyButton(frame)
     if not frame or not frame:IsA("Frame") then return nil end
     local pkg = frame:FindFirstChild("Package")
@@ -162,17 +158,11 @@ local function getDenyButton(frame)
     return denyBtn
 end
 
+-- Core rejection function (no cooldown check – handled by queue worker)
 local function rejectFrameVIM(frame)
     return pcall(function()
         if not frame or not frame.Parent then return false end
         
-        -- Check cooldown
-        local now = tick()
-        if now - lastRejectTime < REJECT_COOLDOWN then
-            return false
-        end
-        
-        -- Get Deny button
         local denyButton = getDenyButton(frame)
         if not denyButton then
             print("[REJECT] Deny button not found for frame: " .. frame.Name)
@@ -182,28 +172,23 @@ local function rejectFrameVIM(frame)
         currentAction = "Clicking Deny on " .. frame.Name
         print("[REJECT] Clicking Deny for frame: " .. frame.Name)
         
-        -- Setup listener to verify the click worked
         local clickFired = false
         local connection = denyButton.Activated:Connect(function()
             clickFired = true
             print("[REJECT] ✅ Activated event confirmed!")
         end)
         
-        -- Select the button
         GuiService.SelectedObject = denyButton
         task.wait(0.05)
         
-        -- Send Return key press + release (keyboard activation)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
         task.wait(0.05)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
         
-        -- Also send ButtonA for gamepad compatibility
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonA, false, game)
         task.wait(0.05)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonA, false, game)
         
-        -- Wait for click confirmation (max 2 seconds)
         local clickWaitStart = tick()
         while not clickFired and tick() - clickWaitStart < 2 do
             task.wait(0.05)
@@ -217,7 +202,6 @@ local function rejectFrameVIM(frame)
         
         print("[REJECT] Waiting for frame to disappear...")
         
-        -- Wait for frame to disappear (check every 0.1s)
         local timeoutStart = tick()
         while frame.Parent and tick() - timeoutStart < 10 do
             task.wait(0.1)
@@ -225,13 +209,57 @@ local function rejectFrameVIM(frame)
         
         if not frame.Parent then
             print("[REJECT] ✅ Frame successfully removed")
-            lastRejectTime = tick()
             return true
         else
             print("[REJECT] ❌ Frame still present after timeout")
             return false
         end
     end)
+end
+
+-- =============================================
+-- ⚡ REJECTION QUEUE (one frame at a time)
+-- =============================================
+local rejectQueue = {}
+local isProcessing = false
+
+local function processRejectQueue()
+    if isProcessing then return end
+    isProcessing = true
+    task.spawn(function()
+        while #rejectQueue > 0 and not KILL do
+            local frame = table.remove(rejectQueue, 1)
+            if frame and frame.Parent then
+                -- Respect cooldown before each rejection
+                local now = tick()
+                local timeSinceLast = now - lastRejectTime
+                if timeSinceLast < REJECT_COOLDOWN then
+                    local waitTime = REJECT_COOLDOWN - timeSinceLast
+                    print(string.format("[QUEUE] Waiting %.2fs for cooldown", waitTime))
+                    task.wait(waitTime)
+                end
+                -- Attempt rejection
+                local success = rejectFrameVIM(frame)
+                if success then
+                    lastRejectTime = tick()
+                    print("[QUEUE] Rejection successful")
+                else
+                    print("[QUEUE] Rejection failed, continuing")
+                end
+                -- Small gap before next
+                task.wait(0.1)
+            end
+        end
+        isProcessing = false
+    end)
+end
+
+local function enqueueReject(frame)
+    if not frame or not frame.Parent then return end
+    table.insert(rejectQueue, frame)
+    if not isProcessing then
+        processRejectQueue()
+    end
 end
 
 -- =============================================
@@ -325,7 +353,7 @@ local function hasAlnum(str)
 end
 
 -- =============================================
--- ⚡ VIM-AWARE FAIL PROCESSOR
+-- ⚡ VIM-AWARE FAIL PROCESSOR (enqueues one at a time)
 -- =============================================
 local function processFailsVIM()
     pcall(function()
@@ -344,10 +372,8 @@ local function processFailsVIM()
         
         if next(unresolved) == nil then return end
         
-        -- Get all current frames
         local frames = scrollingFrame:GetChildren()
         
-        -- Find frames to reject (check in order)
         for _, frame in ipairs(frames) do
             if not frame:IsA("Frame") then continue end
             
@@ -359,53 +385,45 @@ local function processFailsVIM()
             
             -- Corrupt frame (unknown sender + no message content)
             if senderLower == "unknown" and not msgHasAlnum then
-                if rejectFrameVIM(frame) then
-                    return  -- Stop after one successful rejection (cooldown active)
-                end
-                continue
+                enqueueReject(frame)
+                return  -- only enqueue one per call
             end
             
             -- Unknown sender but message contains a fail name
             if senderLower == "unknown" then
                 local matched = findFailsInText(message, unresolved)
                 if matched then
-                    if rejectFrameVIM(frame) then
-                        blockedUsers[matched] = true
-                        return
-                    end
-                    continue
+                    enqueueReject(frame)
+                    blockedUsers[matched] = true
+                    return
                 end
+                continue
             end
             
             -- Direct sender match
             if unresolved[senderLower] then
-                if rejectFrameVIM(frame) then
-                    blockedUsers[senderLower] = true
-                    failTimestamps[senderLower] = nil
-                    return
-                end
-                continue
+                enqueueReject(frame)
+                blockedUsers[senderLower] = true
+                failTimestamps[senderLower] = nil
+                return
             end
             
             -- Sender text contains fail name
             local matched = findFailsInText(sender, unresolved)
             if matched then
-                if rejectFrameVIM(frame) then
-                    blockedUsers[matched] = true
-                    failTimestamps[matched] = nil
-                    return
-                end
-                continue
+                enqueueReject(frame)
+                blockedUsers[matched] = true
+                failTimestamps[matched] = nil
+                return
             end
         end
     end)
 end
 
--- Background corrupt scanner (using VIM rejection)
+-- Background corrupt scanner (enqueues one at a time)
 task.spawn(function()
     while not KILL do
         pcall(function()
-            local corruptFrames = {}
             for _, frame in ipairs(scrollingFrame:GetChildren()) do
                 if frame:IsA("Frame") then
                     local sender = stripInvisible(getFrameSender(frame))
@@ -413,20 +431,17 @@ task.spawn(function()
                     local sLower = sender:gsub("@",""):lower()
                     if not hasAlnum(sLower) then sLower = "unknown" end
                     if sLower == "unknown" and not hasAlnum(msg) then
-                        table.insert(corruptFrames, frame)
+                        enqueueReject(frame)
+                        break  -- only enqueue one per scan
                     end
                 end
-            end
-            
-            if #corruptFrames > 0 then
-                rejectFrameVIM(corruptFrames[1])
             end
         end)
         task.wait(0.5)
     end
 end)
 
--- Backup pass every 0.5s for fails that arrived mid-flight
+-- Backup pass every 0.5s for fails (also enqueues one at a time)
 task.spawn(function()
     while not KILL do
         pcall(function()
@@ -527,10 +542,10 @@ task.spawn(function()
     while not KILL do
         pcall(function()
             guiLabel.Text = string.format(
-                "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s",
+                "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s\nQUEUE: %d",
                 frameCount, TARGET,
                 tostring(DUPE_FLAG), tostring(CHECK_FLAG),
-                #FAILS, currentAction
+                #FAILS, currentAction, #rejectQueue
             )
         end)
         task.wait(0.15)
@@ -637,7 +652,7 @@ while not KILL do
                 elseif frameCount > 4 then
                     local frames = getFrames()
                     if #frames > 0 then
-                        pcall(function() rejectFrameVIM(frames[math.random(1, #frames)]) end)
+                        enqueueReject(frames[math.random(1, #frames)])
                     end
                     currentAction = "Gate: awaiting dupe flag"
                 else
@@ -646,7 +661,7 @@ while not KILL do
                         if frameCount > 4 then
                             local f = getFrames()
                             if #f > 0 then
-                                pcall(function() rejectFrameVIM(f[math.random(1, #f)]) end)
+                                enqueueReject(f[math.random(1, #f)])
                             end
                         end
                         currentAction = "Waiting for FAILS to clear... (#" .. #FAILS .. ")"
@@ -661,7 +676,7 @@ while not KILL do
                         if frameCount > 4 then
                             local f = getFrames()
                             if #f > 0 then
-                                pcall(function() rejectFrameVIM(f[math.random(1, #f)]) end)
+                                enqueueReject(f[math.random(1, #f)])
                             end
                         end
                         task.wait(0.3)
