@@ -15,6 +15,7 @@ local CoreGui     = game:GetService("CoreGui")
 local GuiService  = game:GetService("GuiService")
 local TeleportService = game:GetService("TeleportService")
 local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local player      = Players.LocalPlayer
 
 -- ===================== WAIT FOR LOADING SCREEN =====================
@@ -31,9 +32,7 @@ end
 waitForLoading()
 
 -- ===================== AGGRESSIVE NOTIFICATION FRAME KILLER =====================
--- This hooks into MainFrames.ChildAdded and DESTROYS NotificationFrame the instant it appears
 task.spawn(function()
-    -- Wait for MainFrames to exist
     local mainFrames = playerGui:WaitForChild("MainFrames", 120)
     if not mainFrames then
         print("[CLEANUP] WARNING: MainFrames not found, using fallback")
@@ -50,7 +49,6 @@ task.spawn(function()
     
     print("[CLEANUP] MainFrames found, setting up NotificationFrame killer...")
     
-    -- Destroy any existing one first
     local existing = mainFrames:FindFirstChild("NotificationFrame")
     if existing then
         pcall(function() 
@@ -60,7 +58,6 @@ task.spawn(function()
         print("[CLEANUP] Destroyed existing NotificationFrame")
     end
     
-    -- Hook ChildAdded to kill it the INSTANT it spawns
     mainFrames.ChildAdded:Connect(function(child)
         if child.Name == "NotificationFrame" then
             print("[CLEANUP] ⚡ Intercepted NotificationFrame spawn - DESTROYING")
@@ -71,7 +68,6 @@ task.spawn(function()
         end
     end)
     
-    -- Also run a cleanup loop every 0.1s as backup
     while not KILL do
         local nf = mainFrames:FindFirstChild("NotificationFrame")
         if nf then
@@ -158,7 +154,7 @@ local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):Wa
 local initFired = false
 
 -- =============================================
--- ⚡ MAKE ALL BUTTONS SELECTABLE (like working script)
+-- ⚡ MAKE ALL BUTTONS SELECTABLE
 -- =============================================
 task.spawn(function()
     while not KILL do
@@ -175,8 +171,7 @@ task.spawn(function()
 end)
 
 -- =============================================
--- ⚡ VIM CLICK - EXACT METHOD FROM WORKING SCRIPT
--- NO MOUSE EVENTS - ONLY SelectedObject + Return + ButtonA
+-- ⚡ VIM CLICK - SelectedObject + Return ONLY
 -- =============================================
 local function getDenyButton(frame)
     if not frame or not frame.Parent then return nil end
@@ -205,21 +200,17 @@ local function getDenyButton(frame)
     return nil
 end
 
--- This is the EXACT method from your working script - no mouse events at all
 local function vimClickButton(button)
-    -- Safety checks like the working script
-    if not button or not button.Visible or not button.Selectable or not button.Active then
-        print("[VIM] Button not ready: exists=" .. tostring(button ~= nil) .. 
-              " visible=" .. tostring(button and button.Visible) ..
-              " selectable=" .. tostring(button and button.Selectable) ..
-              " active=" .. tostring(button and button.Active))
+    if not button or not button.Parent then
+        print("[VIM] Button nil or no parent")
         return false
     end
     
-    -- Force selectable/active just in case
+    -- Force selectable/active
     pcall(function()
         button.Selectable = true
         button.Active = true
+        button.Visible = true
     end)
     
     -- Select the button
@@ -231,12 +222,12 @@ local function vimClickButton(button)
     task.wait(0.1)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
     
-    -- Press ButtonA (Gamepad confirm)
+    -- Press ButtonA
     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonA, false, game)
     task.wait(0.1)
     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonA, false, game)
     
-    -- DESELECT after clicking to prevent accidental clicks on other elements
+    -- DESELECT after clicking
     task.wait(0.05)
     GuiService.SelectedObject = nil
     
@@ -244,7 +235,7 @@ local function vimClickButton(button)
 end
 
 -- =============================================
--- ⚡ REJECTION SYSTEM - ONE AT A TIME
+-- ⚡ REJECTION SYSTEM
 -- =============================================
 local rejectQueue = {}
 local isRejecting = false
@@ -267,12 +258,10 @@ local function doReject(frame)
         return false
     end
     
-    print("[REJECT] Found Deny button: " .. denyBtn.Name)
+    print("[REJECT] Found Deny button, clicking...")
     
-    -- First click attempt
     vimClickButton(denyBtn)
     
-    -- Wait and check if frame disappeared
     local startTime = tick()
     local maxWait = 8
     local clickCount = 1
@@ -280,7 +269,6 @@ local function doReject(frame)
     while frame.Parent and (tick() - startTime) < maxWait do
         task.wait(0.3)
         
-        -- Re-click every 1.5 seconds if still there
         if frame.Parent and (tick() - startTime) > clickCount * 1.5 then
             clickCount = clickCount + 1
             denyBtn = getDenyButton(frame)
@@ -326,7 +314,6 @@ local function processQueue()
         
         table.remove(rejectQueue, frameIndex)
         
-        -- Wait for cooldown
         local now = tick()
         local waitTime = REJECT_COOLDOWN - (now - lastRejectComplete)
         if waitTime > 0 then
@@ -506,7 +493,6 @@ local function processFails()
     end
 end
 
--- Background scanners
 task.spawn(function()
     while not KILL do
         pcall(function()
@@ -692,20 +678,46 @@ end)
 RunService:Set3dRenderingEnabled(false)
 connectWS()
 
+-- Wait for character before doing anything
+local character = player.Character or player.CharacterAdded:Wait()
+local hrp = character:WaitForChild("HumanoidRootPart")
+
+-- Teleport to post office
+currentAction = "Teleporting to post office..."
+hrp.CFrame = TELEPORT
+
+-- Wait 5 seconds at post office before starting anything
+print("[INIT] Waiting 5 seconds at post office before starting...")
+for i = 5, 1, -1 do
+    if KILL then break end
+    currentAction = "Waiting " .. i .. "s at post office..."
+    task.wait(1)
+end
+
+-- NOW fire the init remote
+if not initFired and not KILL then
+    currentAction = "Initializing post office"
+    remote:FireServer({ { initIdentifier } })
+    initFired = true
+    print("[INIT] Post office initialized")
+end
+
+-- Extra 2 second wait after init
+task.wait(2)
+
 while not KILL do
     pcall(function()
-        task.wait(0.5)
-        
-        local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            hrp.CFrame = TELEPORT
-            if not initFired then
-                currentAction = "Initializing post office"
-                remote:FireServer({ { initIdentifier } })
-                initFired = true
+        -- Keep position synced
+        local char = player.Character
+        if char then
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.CFrame = TELEPORT
             end
         end
-
+        
+        task.wait(0.5)
+        
         if TARGET <= 0 or KILL then return end
 
         -- Phase 1: Accumulation
