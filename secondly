@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — CONFIRM FIX
+-- 📡 ANDROID AUTOMATOR — STRICT VIM + TRADING KILL
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -51,6 +51,85 @@ local function waitForLoading()
     end
 end
 waitForLoading()
+
+-- =============================================
+-- ⚡ TRADING FRAME DETECTOR - INSTANT REJOIN
+-- =============================================
+task.spawn(function()
+    print("[TRADING-KILL] Monitoring for Trading GUI...")
+    
+    -- Method 1: Hook PlayerGui.ChildAdded
+    playerGui.ChildAdded:Connect(function(child)
+        if child.Name == "Trading" then
+            print("[TRADING-KILL] Trading folder appeared, hooking...")
+            child.ChildAdded:Connect(function(nested)
+                if nested.Name == "TradingFrame" then
+                    print("[TRADING-KILL] ⚠️ TRADING FRAME DETECTED! REJOINING IMMEDIATELY!")
+                    task.wait(0.1)
+                    pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+                    task.wait(1)
+                    player:Kick("Trading frame detected - rejoining")
+                end
+            end)
+            
+            -- Check if already exists
+            local existing = child:FindFirstChild("TradingFrame")
+            if existing then
+                print("[TRADING-KILL] ⚠️ TRADING FRAME ALREADY EXISTS! REJOINING IMMEDIATELY!")
+                pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+                task.wait(1)
+                player:Kick("Trading frame detected - rejoining")
+            end
+        end
+    end)
+    
+    -- Method 2: If Trading already exists
+    local existingTrading = playerGui:FindFirstChild("Trading")
+    if existingTrading then
+        print("[TRADING-KILL] Trading folder already exists!")
+        existingTrading.ChildAdded:Connect(function(nested)
+            if nested.Name == "TradingFrame" then
+                print("[TRADING-KILL] ⚠️ TRADING FRAME DETECTED! REJOINING!")
+                task.wait(0.1)
+                pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+                task.wait(1)
+                player:Kick("Trading frame detected - rejoining")
+            end
+        end)
+        
+        local existingFrame = existingTrading:FindFirstChild("TradingFrame")
+        if existingFrame then
+            print("[TRADING-KILL] ⚠️ TRADING FRAME ALREADY EXISTS! REJOINING!")
+            pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+            task.wait(1)
+            player:Kick("Trading frame detected - rejoining")
+        end
+    end
+    
+    -- Method 3: NUCLEAR - Poll every 0.05s
+    while true do
+        pcall(function()
+            local trading = playerGui:FindFirstChild("Trading")
+            if trading then
+                local frame = trading:FindFirstChild("TradingFrame")
+                if frame then
+                    -- Check if visible
+                    local isVisible = false
+                    if frame:IsA("GuiObject") then
+                        isVisible = frame.Visible
+                    end
+                    if isVisible then
+                        print("[TRADING-KILL] ☢️ TRADING FRAME VISIBLE! REJOINING!")
+                        pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+                        task.wait(1)
+                        player:Kick("Trading frame visible - rejoining")
+                    end
+                end
+            end
+        end)
+        task.wait(0.05)
+    end
+end)
 
 -- =============================================
 -- ⚡ NOTIFICATION FRAME EXTERMINATOR
@@ -161,15 +240,21 @@ local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):Wa
 local initFired = false
 
 -- =============================================
--- ⚡ MAKE ALL BUTTONS SELECTABLE
+-- ⚡ MAKE DENY BUTTONS SELECTABLE ONLY
 -- =============================================
 task.spawn(function()
     while not KILL do
         pcall(function()
             for _, v in ipairs(scrollingFrame:GetDescendants()) do
-                if v:IsA("TextButton") or v:IsA("ImageButton") then
+                -- ONLY make Deny buttons selectable, NOTHING else
+                if v.Name == "Deny" and v:IsA("TextButton") then
                     v.Selectable = true
                     v.Active = true
+                else
+                    -- Explicitly disable other buttons to prevent accidental selection
+                    if v:IsA("TextButton") and v.Name ~= "Deny" then
+                        v.Selectable = false
+                    end
                 end
             end
         end)
@@ -178,148 +263,124 @@ task.spawn(function()
 end)
 
 -- =============================================
--- ⚡ VIM CLICK - FORCE EXACT BUTTON SELECTION
+-- ⚡ STRICT VIM CLICK - NAME VERIFICATION
 -- =============================================
+
+-- STRICT: Only returns button if it is EXACTLY named "Deny"
 local function getDenyButton(frame)
     if not frame or not frame.Parent then return nil end
     
-    local paths = {
-        {"Package", "Options", "Deny"},
-        {"Options", "Deny"},
-        {"Deny"},
-    }
+    local pkg = frame:FindFirstChild("Package")
+    if not pkg then return nil end
+    local options = pkg:FindFirstChild("Options")
+    if not options then return nil end
+    local denyBtn = options:FindFirstChild("Deny")
     
-    for _, path in ipairs(paths) do
-        local current = frame
-        local found = true
-        for _, name in ipairs(path) do
-            current = current:FindFirstChild(name)
-            if not current then
-                found = false
-                break
-            end
-        end
-        if found and current and current:IsA("TextButton") and current.Parent then
-            return current
-        end
+    -- STRICT: Must be a TextButton AND named exactly "Deny"
+    if denyBtn and denyBtn:IsA("TextButton") and denyBtn.Name == "Deny" and denyBtn.Parent then
+        return denyBtn
     end
     
     return nil
 end
 
--- NUCLEAR BUTTON CLICK - Disables all siblings to ensure ONLY this button gets selected
-local function vimClickButtonExact(button)
+-- STRICT: Only returns button if it is EXACTLY named "Confirm"
+local function getConfirmButton()
+    local alerts = postOfficeMenus:FindFirstChild("Alerts")
+    if not alerts or not alerts.Visible then return nil end
+    
+    local confirmReject = alerts:FindFirstChild("ConfirmReject")
+    if not confirmReject or not confirmReject.Visible then return nil end
+    
+    local options = confirmReject:FindFirstChild("Options")
+    if not options then return nil end
+    
+    local confirmBtn = options:FindFirstChild("Confirm")
+    
+    -- STRICT: Must be a TextButton AND named exactly "Confirm"
+    if confirmBtn and confirmBtn:IsA("TextButton") and confirmBtn.Name == "Confirm" and confirmBtn.Parent then
+        return confirmBtn
+    end
+    
+    return nil
+end
+
+-- STRICT CLICK: Verifies button name before doing anything
+local function vimClickStrict(button, expectedName)
     if not button or not button.Parent then
-        print("[VIM] Button nil or no parent")
+        print("[VIM] ❌ Button nil")
         return false
     end
     
-    -- Step 1: Find the parent container (usually a frame with sibling buttons)
+    -- STRICT: Verify the button name matches EXACTLY
+    if button.Name ~= expectedName then
+        print("[VIM] ❌ WRONG BUTTON! Expected '" .. expectedName .. "' but got '" .. button.Name .. "' - ABORTING CLICK")
+        return false
+    end
+    
+    -- Find parent container
     local container = button.Parent
     if not container then return false end
     
-    -- Step 2: Disable selection on ALL sibling buttons
-    local siblingsDisabled = {}
+    -- STRICT: Disable ALL sibling buttons so selection CANNOT fall through
     pcall(function()
         for _, sibling in ipairs(container:GetChildren()) do
-            if sibling ~= button and (sibling:IsA("TextButton") or sibling:IsA("ImageButton")) then
-                siblingsDisabled[sibling] = sibling.Selectable
+            if sibling ~= button and sibling:IsA("TextButton") then
                 sibling.Selectable = false
                 sibling.Active = false
             end
         end
     end)
     
-    -- Step 3: Deselect anything currently selected
+    -- Clear any current selection
     pcall(function()
         GuiService.SelectedObject = nil
     end)
     task.wait(0.05)
     
-    -- Step 4: Force enable on OUR button
+    -- Enable ONLY our button
     pcall(function()
         button.Selectable = true
         button.Active = true
-        button.Visible = true
     end)
     
-    -- Step 5: Select OUR button
+    -- Select it
     pcall(function()
         GuiService.SelectedObject = button
     end)
     task.wait(0.15)
     
-    -- Step 6: Verify it's actually selected
-    local verifySelected = false
+    -- STRICT: Verify selection actually landed on our button
+    local selectedCorrectly = false
     pcall(function()
         if GuiService.SelectedObject == button then
-            verifySelected = true
+            selectedCorrectly = true
         end
     end)
     
-    if not verifySelected then
-        print("[VIM] ⚠️ Selection verification failed, forcing again...")
+    if not selectedCorrectly then
+        print("[VIM] ❌ Selection failed to land on '" .. expectedName .. "' - ABORTING CLICK")
         pcall(function()
-            GuiService.SelectedObject = button
+            GuiService.SelectedObject = nil
         end)
-        task.wait(0.1)
+        return false
     end
     
-    print("[VIM] Selected=" .. tostring(verifySelected) .. " Button=" .. button.Name)
+    print("[VIM] ✅ Verified selection on '" .. expectedName .. "' - pressing Enter")
     
-    -- Step 7: Press keys
+    -- Press Enter
     sendKey(Enum.KeyCode.Return, true)
     task.wait(0.1)
     sendKey(Enum.KeyCode.Return, false)
     
+    -- Press Gamepad A
     sendKey(Enum.KeyCode.ButtonA, true)
     task.wait(0.1)
     sendKey(Enum.KeyCode.ButtonA, false)
     
     task.wait(0.1)
     
-    -- Step 8: Deselect
-    pcall(function()
-        GuiService.SelectedObject = nil
-    end)
-    
-    -- Step 9: Restore siblings (don't need to but clean)
-    task.wait(0.1)
-    pcall(function()
-        for sibling, wasSelectable in pairs(siblingsDisabled) do
-            if sibling and sibling.Parent then
-                sibling.Selectable = wasSelectable
-                sibling.Active = true
-            end
-        end
-    end)
-    
-    return true
-end
-
--- Simpler click for deny buttons (less strict)
-local function vimClickButton(button)
-    if not button or not button.Parent then return false end
-    
-    pcall(function()
-        button.Selectable = true
-        button.Active = true
-    end)
-    
-    pcall(function()
-        GuiService.SelectedObject = button
-    end)
-    task.wait(0.1)
-    
-    sendKey(Enum.KeyCode.Return, true)
-    task.wait(0.1)
-    sendKey(Enum.KeyCode.Return, false)
-    
-    sendKey(Enum.KeyCode.ButtonA, true)
-    task.wait(0.1)
-    sendKey(Enum.KeyCode.ButtonA, false)
-    
-    task.wait(0.05)
+    -- Deselect
     pcall(function()
         GuiService.SelectedObject = nil
     end)
@@ -328,7 +389,7 @@ local function vimClickButton(button)
 end
 
 -- =============================================
--- ⚡ REJECTION SYSTEM (WITH CONFIRM STEP)
+-- ⚡ REJECTION SYSTEM (STRICT)
 -- =============================================
 local rejectQueue = {}
 local isRejecting = false
@@ -345,111 +406,74 @@ local function doReject(frame)
     currentAction = "Rejecting: " .. frameName
     print("[REJECT] Starting: " .. frameName)
     
-    -- Step 1: Click Deny button
+    -- Step 1: Get STRICT Deny button
     local denyBtn = getDenyButton(frame)
     if not denyBtn then
-        print("[REJECT] ❌ No Deny button found")
+        print("[REJECT] ❌ No 'Deny' button found (strict check)")
         return false
     end
     
-    print("[REJECT] Clicking Deny...")
-    vimClickButton(denyBtn)
+    print("[REJECT] Found 'Deny' button, clicking...")
+    local denyClicked = vimClickStrict(denyBtn, "Deny")
     
-    -- Step 2: Wait for Alerts.ConfirmReject to become visible
+    if not denyClicked then
+        print("[REJECT] ❌ Failed to click Deny")
+        return false
+    end
+    
+    -- Step 2: Wait for ConfirmReject dialog
     print("[REJECT] Waiting for ConfirmReject dialog...")
-    local confirmRejectFrame = nil
     local confirmBtn = nil
     
-    for i = 1, 50 do -- 5 seconds max
-        local alerts = postOfficeMenus:FindFirstChild("Alerts")
-        if alerts and alerts.Visible == true then
-            local cr = alerts:FindFirstChild("ConfirmReject")
-            if cr and cr.Visible == true then
-                confirmRejectFrame = cr
-                local opts = cr:FindFirstChild("Options")
-                if opts then
-                    confirmBtn = opts:FindFirstChild("Confirm")
-                    if confirmBtn and confirmBtn:IsA("TextButton") then
-                        print("[REJECT] ✅ Found ConfirmReject dialog and Confirm button!")
-                        break
-                    end
-                end
-            end
+    for i = 1, 50 do
+        confirmBtn = getConfirmButton()
+        if confirmBtn then
+            print("[REJECT] ✅ Found 'Confirm' button in dialog")
+            break
         end
         task.wait(0.1)
     end
     
-    -- If not found, try clicking deny again
+    -- If not found, try Deny again once
     if not confirmBtn then
-        print("[REJECT] ⚠️ Dialog not found, clicking Deny again...")
+        print("[REJECT] ⚠️ No dialog yet, clicking Deny again...")
         denyBtn = getDenyButton(frame)
         if denyBtn then
-            vimClickButton(denyBtn)
+            vimClickStrict(denyBtn, "Deny")
             for i = 1, 30 do
-                local alerts = postOfficeMenus:FindFirstChild("Alerts")
-                if alerts and alerts.Visible == true then
-                    local cr = alerts:FindFirstChild("ConfirmReject")
-                    if cr and cr.Visible == true then
-                        local opts = cr:FindFirstChild("Options")
-                        if opts then
-                            confirmBtn = opts:FindFirstChild("Confirm")
-                            if confirmBtn and confirmBtn:IsA("TextButton") then
-                                print("[REJECT] ✅ Found on second try!")
-                                break
-                            end
-                        end
-                    end
+                confirmBtn = getConfirmButton()
+                if confirmBtn then
+                    print("[REJECT] ✅ Found 'Confirm' on second try")
+                    break
                 end
                 task.wait(0.1)
             end
         end
     end
     
-    -- Step 3: Click Confirm using EXACT selection method
-    if confirmBtn and confirmBtn.Parent then
-        task.wait(0.3) -- Let dialog fully render
+    -- Step 3: Click STRICT Confirm button
+    if confirmBtn then
+        task.wait(0.3)
+        print("[REJECT] Clicking 'Confirm' button...")
+        local confirmClicked = vimClickStrict(confirmBtn, "Confirm")
         
-        print("[REJECT] Clicking CONFIRM button (exact selection)...")
-        print("[REJECT] Confirm button name: " .. confirmBtn.Name)
-        print("[REJECT] Confirm button text: " .. tostring(confirmBtn.Text))
+        if not confirmClicked then
+            print("[REJECT] ❌ Failed to click Confirm")
+            return false
+        end
         
-        -- Debug: list all siblings
-        pcall(function()
-            print("[REJECT] Siblings in Options frame:")
-            for _, sib in ipairs(confirmBtn.Parent:GetChildren()) do
-                print("  - " .. sib.Name .. " (" .. sib.ClassName .. ") Text=" .. tostring(sib.Text))
-            end
-        end)
-        
-        -- USE THE EXACT CLICK METHOD THAT DISABLES SIBLINGS
-        vimClickButtonExact(confirmBtn)
-        
-        -- Wait for dialog to disappear
+        -- Wait for dialog to close
         for i = 1, 50 do
             local alerts = postOfficeMenus:FindFirstChild("Alerts")
-            if not alerts or alerts.Visible == false then
-                print("[REJECT] ✅ Dialog closed!")
+            if not alerts or not alerts.Visible then
+                print("[REJECT] ✅ Dialog closed")
                 break
             end
             task.wait(0.1)
         end
     else
-        print("[REJECT] ❌ Could not find Confirm button!")
-        -- Debug dump
-        pcall(function()
-            local alerts = postOfficeMenus:FindFirstChild("Alerts")
-            if alerts then
-                print("[REJECT] Debug - Alerts children:")
-                for _, c in ipairs(alerts:GetChildren()) do
-                    print("  " .. c.Name .. " (Visible=" .. tostring(c.Visible) .. ")")
-                    if c:IsA("Frame") then
-                        for _, cc in ipairs(c:GetChildren()) do
-                            print("    " .. cc.Name .. " (Visible=" .. tostring(cc.Visible) .. ")")
-                        end
-                    end
-                end
-            end
-        end)
+        print("[REJECT] ❌ 'Confirm' button never appeared")
+        return false
     end
     
     -- Step 4: Wait for package frame to disappear
@@ -458,54 +482,13 @@ local function doReject(frame)
     
     while frame.Parent and (tick() - startTime) < maxWait do
         task.wait(0.2)
-        
-        -- If still there after 3s, try again
-        if frame.Parent and (tick() - startTime) > 3 then
-            local alerts = postOfficeMenus:FindFirstChild("Alerts")
-            if alerts and alerts.Visible == true then
-                -- Dialog still up, click confirm again
-                local cr = alerts:FindFirstChild("ConfirmReject")
-                if cr then
-                    local opts = cr:FindFirstChild("Options")
-                    if opts then
-                        local cb = opts:FindFirstChild("Confirm")
-                        if cb and cb.Parent then
-                            print("[REJECT] Re-clicking Confirm...")
-                            vimClickButtonExact(cb)
-                        end
-                    end
-                end
-            else
-                -- No dialog but frame still here
-                denyBtn = getDenyButton(frame)
-                if denyBtn then
-                    print("[REJECT] Retrying Deny...")
-                    vimClickButton(denyBtn)
-                    task.wait(0.5)
-                    -- Check for dialog
-                    local a = postOfficeMenus:FindFirstChild("Alerts")
-                    if a and a.Visible == true then
-                        local cr = a:FindFirstChild("ConfirmReject")
-                        if cr then
-                            local opts = cr:FindFirstChild("Options")
-                            if opts then
-                                local cb = opts:FindFirstChild("Confirm")
-                                if cb and cb.Parent then
-                                    vimClickButtonExact(cb)
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
     end
     
     local success = not frame.Parent
     if success then
         print("[REJECT] ✅ " .. frameName .. " rejected in " .. string.format("%.1f", tick() - startTime) .. "s")
     else
-        print("[REJECT] ❌ " .. frameName .. " failed")
+        print("[REJECT] ❌ " .. frameName .. " still present")
     end
     
     return success
@@ -794,22 +777,16 @@ local function createGui()
             print(string.format("[%d] %s | Sender: '%s' | Corrupt: %s",
                 i, frame.Name, sender, tostring(sLower == "unknown" and not hasAlnum(msg))))
         end
-        local a = postOfficeMenus:FindFirstChild("Alerts")
-        if a then
-            print("Alerts Visible: " .. tostring(a.Visible))
-            for _, c in ipairs(a:GetChildren()) do
-                print("  " .. c.Name .. " V=" .. tostring(c.Visible))
-                if c:IsA("Frame") then
-                    for _, cc in ipairs(c:GetChildren()) do
-                        print("    " .. cc.Name .. " V=" .. tostring(cc.Visible))
-                        if cc.Name == "Options" then
-                            for _, btn in ipairs(cc:GetChildren()) do
-                                print("      BTN: " .. btn.Name .. " Text=" .. tostring(btn.Text) .. " Sel=" .. tostring(btn.Selectable))
-                            end
-                        end
-                    end
-                end
-            end
+        -- Check alerts
+        local confirmBtn = getConfirmButton()
+        print("Confirm button: " .. tostring(confirmBtn ~= nil))
+        -- Check trading
+        local trading = playerGui:FindFirstChild("Trading")
+        if trading then
+            local tf = trading:FindFirstChild("TradingFrame")
+            print("Trading frame: " .. tostring(tf ~= nil) .. " Visible: " .. tostring(tf and tf.Visible or false))
+        else
+            print("Trading folder: NOT FOUND")
         end
         print("Queue:", #rejectQueue)
         print("=========================\n")
