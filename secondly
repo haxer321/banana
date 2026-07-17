@@ -143,8 +143,7 @@ local initFired = false
 -- =============================================
 -- ⚡ VIM REJECTION SYSTEM (with verification)
 -- =============================================
-local lastRejectTime = 0
-local REJECT_COOLDOWN = 5  -- 5 second cooldown per rejection
+local REJECT_COOLDOWN = 5  -- 5 seconds after frame disappears
 
 -- Helper: get Deny button
 local function getDenyButton(frame)
@@ -158,70 +157,75 @@ local function getDenyButton(frame)
     return denyBtn
 end
 
--- Core rejection function (no cooldown check – handled by queue worker)
+-- Core rejection function: returns success, and the time when frame was considered gone (or timeout)
 local function rejectFrameVIM(frame)
-    return pcall(function()
-        if not frame or not frame.Parent then return false end
-        
-        local denyButton = getDenyButton(frame)
-        if not denyButton then
-            print("[REJECT] Deny button not found for frame: " .. frame.Name)
-            return false
-        end
-        
-        currentAction = "Clicking Deny on " .. frame.Name
-        print("[REJECT] Clicking Deny for frame: " .. frame.Name)
-        
-        local clickFired = false
-        local connection = denyButton.Activated:Connect(function()
-            clickFired = true
-            print("[REJECT] ✅ Activated event confirmed!")
-        end)
-        
-        GuiService.SelectedObject = denyButton
-        task.wait(0.05)
-        
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
-        task.wait(0.05)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
-        
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonA, false, game)
-        task.wait(0.05)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonA, false, game)
-        
-        local clickWaitStart = tick()
-        while not clickFired and tick() - clickWaitStart < 2 do
-            task.wait(0.05)
-        end
-        
-        connection:Disconnect()
-        
-        if not clickFired then
-            print("[REJECT] ⚠️ Click verification failed - button.Activated didn't fire")
-        end
-        
-        print("[REJECT] Waiting for frame to disappear...")
-        
-        local timeoutStart = tick()
-        while frame.Parent and tick() - timeoutStart < 10 do
-            task.wait(0.1)
-        end
-        
-        if not frame.Parent then
-            print("[REJECT] ✅ Frame successfully removed")
-            return true
-        else
-            print("[REJECT] ❌ Frame still present after timeout")
-            return false
-        end
+    if not frame or not frame.Parent then
+        -- Frame already gone; return success with current time (no wait needed)
+        return true, tick()
+    end
+    
+    local denyButton = getDenyButton(frame)
+    if not denyButton then
+        print("[REJECT] Deny button not found for frame: " .. frame.Name)
+        return false, tick()
+    end
+    
+    currentAction = "Clicking Deny on " .. frame.Name
+    print("[REJECT] Clicking Deny for frame: " .. frame.Name)
+    
+    local clickFired = false
+    local connection = denyButton.Activated:Connect(function()
+        clickFired = true
+        print("[REJECT] ✅ Activated event confirmed!")
     end)
+    
+    GuiService.SelectedObject = denyButton
+    task.wait(0.05)
+    
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
+    task.wait(0.05)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+    
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonA, false, game)
+    task.wait(0.05)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonA, false, game)
+    
+    local clickWaitStart = tick()
+    while not clickFired and tick() - clickWaitStart < 2 do
+        task.wait(0.05)
+    end
+    connection:Disconnect()
+    
+    if not clickFired then
+        print("[REJECT] ⚠️ Click verification failed - button.Activated didn't fire")
+    end
+    
+    -- Wait for the frame to disappear (up to 10 seconds)
+    print("[REJECT] Waiting for frame to disappear...")
+    local startWait = tick()
+    local timeout = 10
+    while frame.Parent and tick() - startWait < timeout do
+        task.wait(0.1)
+    end
+    
+    local gone = not frame.Parent
+    local endTime = tick()  -- time when we stop waiting
+    
+    if gone then
+        print("[REJECT] ✅ Frame successfully removed after " .. string.format("%.2f", endTime - startWait) .. "s")
+        return true, endTime
+    else
+        print("[REJECT] ❌ Frame still present after timeout")
+        return false, endTime
+    end
 end
 
 -- =============================================
--- ⚡ REJECTION QUEUE (one frame at a time)
+-- ⚡ REJECTION QUEUE (one frame at a time, with 5s wait after disappearance)
 -- =============================================
 local rejectQueue = {}
 local isProcessing = false
+local lastDoneTime = 0  -- time when the last frame was finished (disappeared or timeout)
 
 local function processRejectQueue()
     if isProcessing then return end
@@ -230,24 +234,27 @@ local function processRejectQueue()
         while #rejectQueue > 0 and not KILL do
             local frame = table.remove(rejectQueue, 1)
             if frame and frame.Parent then
-                -- Respect cooldown before each rejection
+                -- Wait until cooldown from previous frame's done time is satisfied
                 local now = tick()
-                local timeSinceLast = now - lastRejectTime
-                if timeSinceLast < REJECT_COOLDOWN then
-                    local waitTime = REJECT_COOLDOWN - timeSinceLast
-                    print(string.format("[QUEUE] Waiting %.2fs for cooldown", waitTime))
+                local timeSinceDone = now - lastDoneTime
+                if timeSinceDone < REJECT_COOLDOWN then
+                    local waitTime = REJECT_COOLDOWN - timeSinceDone
+                    print(string.format("[QUEUE] Waiting %.2fs before next rejection (cooldown)", waitTime))
                     task.wait(waitTime)
                 end
-                -- Attempt rejection
-                local success = rejectFrameVIM(frame)
+                
+                -- Perform rejection
+                local success, doneTime = rejectFrameVIM(frame)
                 if success then
-                    lastRejectTime = tick()
                     print("[QUEUE] Rejection successful")
                 else
-                    print("[QUEUE] Rejection failed, continuing")
+                    print("[QUEUE] Rejection failed")
                 end
-                -- Small gap before next
-                task.wait(0.1)
+                lastDoneTime = doneTime  -- record when this frame finished (disappeared or timeout)
+            else
+                -- Frame already gone; treat as done now
+                print("[QUEUE] Frame no longer exists, skipping")
+                lastDoneTime = tick()
             end
         end
         isProcessing = false
