@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — FIXED VIM EDITION
+-- 📡 ANDROID AUTOMATOR — PROPER VIM EDITION
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -22,7 +22,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 local function waitForLoading()
     local loadingGui = playerGui:FindFirstChild("LoadingGui")
     if loadingGui then
-        print("[INFO] Waiting for LoadingGui to disappear...")
+        print("[INFO] Waiting for LoadingGui...")
         loadingGui:GetPropertyChangedSignal("Parent"):Wait()
         while loadingGui.Parent do task.wait(0.05) end
         task.wait(5)
@@ -30,31 +30,60 @@ local function waitForLoading()
 end
 waitForLoading()
 
--- ===================== REMOVE DISRUPTING FRAMES =====================
-local function cleanupDisruptingUIs()
-    print("[CLEANUP] Removing disrupting UI frames...")
-    for i = 1, 5 do
+-- ===================== AGGRESSIVE NOTIFICATION CLEANUP =====================
+local function cleanupNotifications()
+    print("[CLEANUP] Starting aggressive notification cleanup...")
+    
+    -- Method 1: Direct find and destroy
+    for attempt = 1, 20 do
         local mainFrames = playerGui:FindFirstChild("MainFrames")
         if mainFrames then
             local notifFrame = mainFrames:FindFirstChild("NotificationFrame")
             if notifFrame then
-                pcall(function() notifFrame:Destroy() end)
-                task.wait(0.2)
-                if not notifFrame.Parent then
-                    print("[CLEANUP] ✅ NotificationFrame deleted")
-                    return
-                end
+                print("[CLEANUP] Found NotificationFrame, destroying (attempt " .. attempt .. ")")
+                notifFrame:Destroy()
+                task.wait(0.1)
             else
-                print("[CLEANUP] ✅ NotificationFrame not found")
-                return
+                print("[CLEANUP] ✅ NotificationFrame gone")
+                break
             end
         else
-            return
+            -- Try to find it anywhere
+            for _, child in ipairs(playerGui:GetDescendants()) do
+                if child.Name == "NotificationFrame" and child:IsA("Frame") then
+                    print("[CLEANUP] Found NotificationFrame in: " .. child.Parent.Name)
+                    child:Destroy()
+                    task.wait(0.1)
+                end
+            end
+            break
         end
-        task.wait(0.5)
+        task.wait(0.2)
     end
+    
+    -- Method 2: Disable any notification scripts
+    for _, child in ipairs(playerGui:GetDescendants()) do
+        if child.Name:find("Notification") and child:IsA("Script") then
+            print("[CLEANUP] Disabling notification script: " .. child.Name)
+            child.Disabled = true
+        end
+    end
+    
+    -- Method 3: Hook any future notification frames
+    local mainFrames = playerGui:FindFirstChild("MainFrames")
+    if mainFrames then
+        mainFrames.ChildAdded:Connect(function(child)
+            if child.Name == "NotificationFrame" then
+                print("[CLEANUP] Intercepted new NotificationFrame, destroying")
+                task.wait(0.05)
+                pcall(function() child:Destroy() end)
+            end
+        end)
+    end
+    
+    print("[CLEANUP] ✅ Complete")
 end
-cleanupDisruptingUIs()
+cleanupNotifications()
 
 -- ===================== G KEY CONSOLE LISTENER =====================
 UserInputService.InputBegan:Connect(function(input, gp)
@@ -77,7 +106,6 @@ local DUPE_FLAG    = false
 local CHECK_FLAG   = true
 local TELEPORT     = CFrame.new(-460, 244, -67)
 local currentAction = "Idle"
-
 local blockedUsers = {}
 
 -- =============================================
@@ -130,200 +158,293 @@ local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):Wa
 local initFired = false
 
 -- =============================================
--- ⚡ BRUTE FORCE CLICK SYSTEM
+-- ⚡ PROPER VIM CLICK SYSTEM
 -- =============================================
+
+-- Helper: Scroll frame into view
+local function scrollToFrame(frame)
+    if not frame or not frame.Parent then return false end
+    
+    -- Get the scrolling frame that contains this
+    local scrollParent = frame.Parent
+    while scrollParent and not scrollParent:IsA("ScrollingFrame") do
+        scrollParent = scrollParent.Parent
+    end
+    
+    if scrollParent and scrollParent:IsA("ScrollingFrame") then
+        pcall(function()
+            scrollParent:ScrollToChild(frame)
+            task.wait(0.15) -- Wait for scroll animation
+        end)
+    end
+    
+    return true
+end
+
+-- Helper: Check if element is visible on screen
+local function isElementVisible(element)
+    if not element or not element.Parent then return false end
+    
+    -- Check if any parent is not visible
+    local current = element
+    while current do
+        if current:IsA("GuiObject") then
+            if current.Visible == false then return false end
+            if current.BackgroundTransparency >= 1 and current:IsA("Frame") and #current:GetChildren() == 0 then
+                -- Empty fully transparent frame - might be hidden
+            end
+        end
+        current = current.Parent
+    end
+    
+    return true
+end
+
+-- Helper: Get absolute center position of a GUI element
+local function getElementCenter(element)
+    if not element or not element.Parent then return nil, nil end
+    
+    local success, result = pcall(function()
+        -- Calculate absolute position by walking up the hierarchy
+        local offsetX = element.AbsolutePosition.X
+        local offsetY = element.AbsolutePosition.Y
+        local sizeX = element.AbsoluteSize.X
+        local sizeY = element.AbsoluteSize.Y
+        
+        return offsetX + sizeX / 2, offsetY + sizeY / 2
+    end)
+    
+    if success then
+        return result
+    else
+        return nil, nil
+    end
+end
+
+-- Get Deny button with proper path traversal
 local function getDenyButton(frame)
     if not frame or not frame.Parent then return nil end
-    local pkg = frame:FindFirstChild("Package")
-    if not pkg then return nil end
-    local options = pkg:FindFirstChild("Options")
-    if not options then return nil end
-    local denyBtn = options:FindFirstChild("Deny")
-    if denyBtn and denyBtn:IsA("TextButton") and denyBtn.Parent then
-        return denyBtn
+    
+    -- Try multiple possible paths
+    local paths = {
+        {"Package", "Options", "Deny"},
+        {"Options", "Deny"},
+        {"Deny"},
+    }
+    
+    for _, path in ipairs(paths) do
+        local current = frame
+        local found = true
+        for i, name in ipairs(path) do
+            current = current:FindFirstChild(name)
+            if not current then
+                found = false
+                break
+            end
+        end
+        if found and current and current:IsA("TextButton") and current.Parent then
+            return current
+        end
     end
+    
     return nil
 end
 
--- Aggressive click that tries EVERYTHING
-local function bruteForceClick(btn)
-    if not btn or not btn.Parent then return false end
+-- PROPER VIM CLICK - The correct way to simulate clicks in Roblox
+local function vimClick(button)
+    if not button or not button.Parent then
+        print("[VIM] Button invalid")
+        return false
+    end
     
-    -- Method 1: Direct fire
+    -- Step 1: Make sure button is visible and scrolled into view
+    local frame = button
+    while frame and frame ~= scrollingFrame do
+        if frame:IsA("Frame") then
+            scrollToFrame(frame)
+        end
+        frame = frame.Parent
+    end
+    scrollToFrame(button)
+    task.wait(0.1)
+    
+    -- Step 2: Verify button still exists and is visible
+    if not button.Parent then
+        print("[VIM] Button disappeared before click")
+        return false
+    end
+    
+    -- Step 3: Get the exact screen position
+    local centerX, centerY = getElementCenter(button)
+    if not centerX or not centerY then
+        print("[VIM] Could not get button position")
+        return false
+    end
+    
+    print(string.format("[VIM] Button position: %.0f, %.0f", centerX, centerY))
+    
+    -- Step 4: Move mouse to button center
     pcall(function()
-        btn.MouseButton1Click:Fire()
+        VirtualInputManager:SendMouseMovementEvent(centerX, centerY, game)
     end)
     task.wait(0.05)
     
-    -- Method 2: Activate
+    -- Step 5: Send mouse down event
     pcall(function()
-        btn:Activate()
+        VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game)
+    end)
+    task.wait(0.02)
+    
+    -- Step 6: Send mouse up event
+    pcall(function()
+        VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game)
     end)
     task.wait(0.05)
     
-    -- Method 3: Select + Enter
+    -- Step 7: Also try GuiService selection method as backup
     pcall(function()
-        GuiService.SelectedObject = btn
-        task.wait(0.03)
+        GuiService.SelectedObject = button
+        task.wait(0.02)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
         task.wait(0.02)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
     end)
-    task.wait(0.05)
+    task.wait(0.03)
     
-    -- Method 4: Select + Space
+    -- Step 8: Try direct event fire as final backup
     pcall(function()
-        GuiService.SelectedObject = btn
-        task.wait(0.03)
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-        task.wait(0.02)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
-    end)
-    task.wait(0.05)
-    
-    -- Method 5: Mouse click at center
-    pcall(function()
-        local pos = btn.AbsolutePosition
-        local size = btn.AbsoluteSize
-        local x = pos.X + size.X / 2
-        local y = pos.Y + size.Y / 2
-        VirtualInputManager:SendMouseMovementEvent(x, y, game)
-        task.wait(0.02)
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game)
-        task.wait(0.02)
-        VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game)
-    end)
-    task.wait(0.05)
-    
-    -- Method 6: Gamepad A
-    pcall(function()
-        GuiService.SelectedObject = btn
-        task.wait(0.03)
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.ButtonA, false, game)
-        task.wait(0.02)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.ButtonA, false, game)
+        if button and button.Parent then
+            button.MouseButton1Click:Fire()
+        end
     end)
     
     return true
 end
 
 -- =============================================
--- ⚡ SIMPLIFIED QUEUE - ONE AT A TIME, NO BS
+-- ⚡ REJECTION SYSTEM - ONE AT A TIME
 -- =============================================
 local rejectQueue = {}
-local processingFrame = nil
-local lastRejectTime = 0
-local COOLDOWN = 2.5
+local isRejecting = false
+local lastRejectComplete = 0
+local REJECT_COOLDOWN = 3.0
 
-local function processNextInQueue()
-    if processingFrame or KILL then return end
+local function doReject(frame)
+    if not frame or not frame.Parent then
+        print("[REJECT] Frame already gone")
+        return true
+    end
     
-    -- Find next valid frame
-    local frameToProcess = nil
-    local frameIndex = nil
+    local frameName = frame.Name
+    currentAction = "Rejecting: " .. frameName
+    print("[REJECT] Starting: " .. frameName)
     
-    for i, f in ipairs(rejectQueue) do
-        if f and f.Parent then
-            frameToProcess = f
-            frameIndex = i
+    -- Get the deny button
+    local denyBtn = getDenyButton(frame)
+    if not denyBtn then
+        print("[REJECT] ❌ No Deny button found")
+        return false
+    end
+    
+    print("[REJECT] Found Deny button: " .. denyBtn.Name)
+    
+    -- First click attempt
+    vimClick(denyBtn)
+    
+    -- Wait and check if frame disappeared
+    local startTime = tick()
+    local maxWait = 8
+    local clickCount = 1
+    
+    while frame.Parent and (tick() - startTime) < maxWait do
+        task.wait(0.2)
+        
+        -- Re-click every 1.5 seconds if still there
+        if frame.Parent and (tick() - startTime) > clickCount * 1.5 then
+            clickCount = clickCount + 1
+            denyBtn = getDenyButton(frame)
+            if denyBtn then
+                print("[REJECT] Re-clicking (" .. clickCount .. ")")
+                vimClick(denyBtn)
+            end
+        end
+    end
+    
+    local success = not frame.Parent
+    if success then
+        print("[REJECT] ✅ Frame removed after " .. string.format("%.1f", tick() - startTime) .. "s")
+    else
+        print("[REJECT] ❌ Frame still present after timeout")
+    end
+    
+    return success
+end
+
+local function processQueue()
+    if isRejecting or KILL then return end
+    if #rejectQueue == 0 then return end
+    
+    isRejecting = true
+    
+    while #rejectQueue > 0 and not KILL do
+        -- Find next valid frame
+        local frameToReject = nil
+        local frameIndex = nil
+        
+        for i, f in ipairs(rejectQueue) do
+            if f and f.Parent then
+                frameToReject = f
+                frameIndex = i
+                break
+            end
+        end
+        
+        if not frameToReject then
+            -- Clear invalid entries
+            rejectQueue = {}
             break
         end
-    end
-    
-    if not frameToProcess then
-        -- Clear invalid entries
-        rejectQueue = {}
-        return
-    end
-    
-    -- Remove from queue
-    table.remove(rejectQueue, frameIndex)
-    
-    -- Wait for cooldown
-    local now = tick()
-    local waitTime = COOLDOWN - (now - lastRejectTime)
-    if waitTime > 0 then
-        task.wait(waitTime)
-    end
-    
-    if KILL then return end
-    if not frameToProcess.Parent then return end
-    
-    processingFrame = frameToProcess
-    currentAction = "Rejecting: " .. frameToProcess.Name
-    print("[REJECT] Start: " .. frameToProcess.Name)
-    
-    -- Get button
-    local denyBtn = getDenyButton(frameToProcess)
-    if not denyBtn then
-        print("[REJECT] No button found")
-        processingFrame = nil
-        return
-    end
-    
-    -- BRUTE FORCE CLICK
-    bruteForceClick(denyBtn)
-    
-    -- Wait and verify
-    local startTime = tick()
-    local maxWait = 6
-    
-    while frameToProcess.Parent and (tick() - startTime) < maxWait do
-        task.wait(0.15)
         
-        -- If still there after 1 second, click again aggressively
-        if frameToProcess.Parent and (tick() - startTime) > 1 then
-            denyBtn = getDenyButton(frameToProcess)
-            if denyBtn then
-                bruteForceClick(denyBtn)
-            end
+        -- Remove from queue
+        table.remove(rejectQueue, frameIndex)
+        
+        -- Wait for cooldown
+        local now = tick()
+        local waitTime = REJECT_COOLDOWN - (now - lastRejectComplete)
+        if waitTime > 0 then
+            task.wait(waitTime)
         end
         
-        -- If still there after 3 seconds, click again
-        if frameToProcess.Parent and (tick() - startTime) > 3 then
-            denyBtn = getDenyButton(frameToProcess)
-            if denyBtn then
-                bruteForceClick(denyBtn)
-            end
-        end
+        if KILL then break end
+        
+        -- Do the rejection
+        doReject(frameToReject)
+        lastRejectComplete = tick()
+        
+        -- Small delay between rejections
+        task.wait(0.5)
     end
     
-    local success = not frameToProcess.Parent
-    lastRejectTime = tick()
-    processingFrame = nil
-    
-    if success then
-        print("[REJECT] ✅ Done: " .. frameToProcess.Name)
-    else
-        print("[REJECT] ❌ Timeout: " .. frameToProcess.Name)
-    end
-    
+    isRejecting = false
     currentAction = "Idle"
-    
-    -- Process next if any
-    task.wait(0.3)
-    if #rejectQueue > 0 and not KILL then
-        processNextInQueue()
-    end
 end
 
 local function enqueueReject(frame)
     if not frame or not frame.Parent then return end
     
-    -- Don't add if already processing this frame
-    if processingFrame == frame then return end
-    
-    -- Don't add duplicates
+    -- Check for duplicates
     for _, f in ipairs(rejectQueue) do
-        if f == frame then return end
+        if f == frame then
+            return
+        end
     end
     
     table.insert(rejectQueue, frame)
-    print("[QUEUE] Added: " .. frame.Name .. " (queue: " .. #rejectQueue .. ")")
+    print("[QUEUE] Added: " .. frame.Name .. " (size: " .. #rejectQueue .. ")")
     
-    -- Start processing if idle
-    if not processingFrame then
-        task.spawn(processNextInQueue)
+    -- Start processing if not already
+    if not isRejecting then
+        task.spawn(processQueue)
     end
 end
 
@@ -347,7 +468,7 @@ rebuildCache()
 
 local function getFrames()
     local out = {}
-    for _, f in pairs(frameCache) do
+    for name, f in pairs(frameCache) do
         if f and f.Parent then
             table.insert(out, f)
         end
@@ -444,13 +565,13 @@ local function processFails()
         local message = stripInvisible(getFrameMessage(frame))
         if not hasAlnum(sender) then sender = "unknown" end
         
-        -- Corrupt
+        -- Corrupt frame
         if sender == "unknown" and not hasAlnum(message) then
             enqueueReject(frame)
             return
         end
         
-        -- Unknown sender, check message
+        -- Unknown sender, check message for fail name
         if sender == "unknown" then
             local matched = findFailsInText(message, unresolved)
             if matched then
@@ -461,14 +582,14 @@ local function processFails()
             continue
         end
         
-        -- Direct match
+        -- Direct sender match
         if unresolved[sender] then
             enqueueReject(frame)
             blockedUsers[sender] = true
             return
         end
         
-        -- Partial match
+        -- Partial match in sender
         local matched = findFailsInText(sender, unresolved)
         if matched then
             enqueueReject(frame)
@@ -516,8 +637,8 @@ local function createGui()
     sg.DisplayOrder = 999
 
     local mainFrame = Instance.new("Frame", sg)
-    mainFrame.Size = UDim2.new(0, 420, 0, 240)
-    mainFrame.Position = UDim2.new(0.5, -210, 0.5, -120)
+    mainFrame.Size = UDim2.new(0, 420, 0, 260)
+    mainFrame.Position = UDim2.new(0.5, -210, 0.5, -130)
     mainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
     mainFrame.BackgroundTransparency = 0.3
     Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 6)
@@ -548,6 +669,7 @@ local function createGui()
 
     local debugBtn = makeBtn("Dump", UDim2.new(1, -180, 1, -40))
     local reloadBtn = makeBtn("Reload", UDim2.new(1, -90, 1, -40))
+    local testBtn = makeBtn("Test", UDim2.new(1, -270, 1, -40))
 
     local function dump()
         print("\n===== PACKAGE DUMP =====")
@@ -556,14 +678,47 @@ local function createGui()
             local msg = stripInvisible(getFrameMessage(frame))
             local sLower = sender:lower()
             if not hasAlnum(sLower) then sLower = "unknown" end
-            print(string.format("[%d] %s | Sender: %s | Msg: %s | Corrupt: %s",
-                i, frame.Name, sender, msg, tostring(sLower == "unknown" and not hasAlnum(msg))))
+            local denyBtn = getDenyButton(frame)
+            local btnInfo = denyBtn and "FOUND" or "NOT FOUND"
+            print(string.format("[%d] %s | Sender: '%s' | Msg: '%s' | Corrupt: %s | Deny: %s",
+                i, frame.Name, sender, msg, tostring(sLower == "unknown" and not hasAlnum(msg)), btnInfo))
         end
         print("FAILS:", HttpService:JSONEncode(FAILS))
         print("Blocked:", HttpService:JSONEncode(blockedUsers))
-        print("Queue:", #rejectQueue)
+        print("Queue:", #rejectQueue, "Processing:", tostring(isRejecting))
         print("=========================\n")
     end
+
+    -- Test button - tries to click the first frame's deny button
+    testBtn.MouseButton1Click:Connect(function()
+        print("\n===== VIM TEST =====")
+        local frames = getFrames()
+        if #frames == 0 then
+            print("No frames to test")
+            return
+        end
+        
+        local testFrame = frames[1]
+        local denyBtn = getDenyButton(testFrame)
+        
+        if not denyBtn then
+            print("Could not find Deny button on first frame")
+            -- Debug the frame structure
+            print("Frame children:")
+            for _, child in ipairs(testFrame:GetDescendants()) do
+                print("  " .. child.Name .. " (" .. child.ClassName .. ")")
+            end
+            return
+        end
+        
+        print("Found Deny button, attempting VIM click...")
+        local cx, cy = getElementCenter(denyBtn)
+        print(string.format("Button center: %.0f, %.0f", cx or 0, cy or 0))
+        
+        vimClick(denyBtn)
+        print("VIM click sent")
+        print("===================\n")
+    end)
 
     debugBtn.MouseButton1Click:Connect(dump)
     UserInputService.InputBegan:Connect(function(input, gp)
@@ -587,10 +742,10 @@ task.spawn(function()
     while not KILL do
         pcall(function()
             guiLabel.Text = string.format(
-                "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s\nQUEUE: %d",
+                "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s\nQUEUE: %d\nPROC: %s",
                 frameCount, TARGET,
                 tostring(DUPE_FLAG), tostring(CHECK_FLAG),
-                #FAILS, currentAction, #rejectQueue
+                #FAILS, currentAction, #rejectQueue, tostring(isRejecting)
             )
         end)
         task.wait(0.15)
