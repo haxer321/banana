@@ -30,6 +30,22 @@ local function waitForLoading()
 end
 waitForLoading()
 
+-- ===================== REMOVE DISRUPTING FRAMES =====================
+local function cleanupDisruptingUIs()
+    print("[CLEANUP] Removing disrupting UI frames...")
+    
+    -- Delete NotificationFrame
+    local mainFrames = playerGui:FindFirstChild("MainFrames")
+    if mainFrames then
+        local notifFrame = mainFrames:FindFirstChild("NotificationFrame")
+        if notifFrame then
+            print("[CLEANUP] ✅ Deleted NotificationFrame")
+            notifFrame:Destroy()
+        end
+    end
+end
+cleanupDisruptingUIs()
+
 local WS_URL = "ws://localhost:8080"
 local ws = nil
 
