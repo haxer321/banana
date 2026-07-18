@@ -1,11 +1,13 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — STRICT VIM + TRADING KILL
+-- 📡 ANDROID AUTOMATOR — STRICT VIM + TRADING KILL (REVISED)
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 task.spawn(function()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))()
+    pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))()
+    end)
 end)
 
 local HttpService = game:GetService("HttpService")
@@ -15,22 +17,21 @@ local CoreGui     = game:GetService("CoreGui")
 local GuiService  = game:GetService("GuiService")
 local TeleportService = game:GetService("TeleportService")
 local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local player      = Players.LocalPlayer
+local playerGui   = player:WaitForChild("PlayerGui")
 
 -- =============================================
--- ⚡ VIRTUAL INPUT
+-- ⚡ VIRTUAL INPUT MANAGER
 -- =============================================
 local Vim = nil
-if VirtualInputManager then
-    Vim = VirtualInputManager
-else
-    local ok, service = pcall(function()
-        return game:GetService("VirtualInputManager")
-    end)
-    if ok and service then
-        Vim = service
+pcall(function()
+    if VirtualInputManager then
+        Vim = VirtualInputManager
+    else
+        Vim = game:GetService("VirtualInputManager")
     end
-end
+end)
 
 local function sendKey(keyCode, pressed)
     if Vim then
@@ -41,12 +42,12 @@ local function sendKey(keyCode, pressed)
 end
 
 -- ===================== WAIT FOR LOADING SCREEN =====================
-local playerGui = player:WaitForChild("PlayerGui")
 local function waitForLoading()
     local loadingGui = playerGui:FindFirstChild("LoadingGui")
     if loadingGui then
-        loadingGui:GetPropertyChangedSignal("Parent"):Wait()
-        while loadingGui.Parent do task.wait(0.05) end
+        while loadingGui and loadingGui.Parent do
+            task.wait(0.1)
+        end
         task.wait(5)
     end
 end
@@ -62,18 +63,15 @@ task.spawn(function()
         print("[TRADING-KILL] ☢️ TRADING FRAME .Visible == true! REJOINING IMMEDIATELY!")
         pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
         task.wait(1)
-        player:Kick("Trading frame became visible - rejoining")
+        pcall(function() player:Kick("Trading frame became visible - rejoining") end)
     end
     
-    -- Setup monitoring on a TradingFrame if it exists
     local function monitorTradingFrame(frame)
         if not frame then return end
-        -- Check if ALREADY visible right now
         if frame.Visible == true then
             tradingFrameBecameVisible()
             return
         end
-        -- Hook Visible changing to true
         frame:GetPropertyChangedSignal("Visible"):Connect(function()
             if frame.Visible == true then
                 tradingFrameBecameVisible()
@@ -81,73 +79,44 @@ task.spawn(function()
         end)
     end
     
-    -- Setup monitoring on Trading folder if it exists
     local function monitorTradingFolder(folder)
         if not folder then return end
-        -- Check if frame already exists inside
         local existingFrame = folder:FindFirstChild("TradingFrame")
-        if existingFrame then
-            monitorTradingFrame(existingFrame)
-        end
-        -- Hook for new frames being added
+        if existingFrame then monitorTradingFrame(existingFrame) end
         folder.ChildAdded:Connect(function(child)
-            if child.Name == "TradingFrame" then
-                monitorTradingFrame(child)
-            end
+            if child.Name == "TradingFrame" then monitorTradingFrame(child) end
         end)
     end
     
-    -- Check if Trading folder already exists
     local existingTrading = playerGui:FindFirstChild("Trading")
-    if existingTrading then
-        monitorTradingFolder(existingTrading)
-    end
+    if existingTrading then monitorTradingFolder(existingTrading) end
     
-    -- Hook for Trading folder being created
     playerGui.ChildAdded:Connect(function(child)
-        if child.Name == "Trading" then
-            monitorTradingFolder(child)
-        end
+        if child.Name == "Trading" then monitorTradingFolder(child) end
     end)
 end)
 
 -- =============================================
--- ⚡ NOTIFICATION FRAME EXTERMINATOR
+-- ⚡ NOTIFICATION GUI EXTERMINATOR
 -- =============================================
 task.spawn(function()
-    local mainFramesHooked = false
-    playerGui.ChildAdded:Connect(function(child)
-        if child.Name == "MainFrames" and not mainFramesHooked then
-            mainFramesHooked = true
-            child.ChildAdded:Connect(function(nestedChild)
-                if nestedChild.Name == "NotificationFrame" then
-                    pcall(function() nestedChild:Destroy() end)
-                end
-            end)
-        end
-    end)
-    
-    local existingMainFrames = playerGui:FindFirstChild("MainFrames")
-    if existingMainFrames then
-        mainFramesHooked = true
-        existingMainFrames.ChildAdded:Connect(function(child)
-            if child.Name == "NotificationFrame" then
-                pcall(function() child:Destroy() end)
-            end
-        end)
-        local existing = existingMainFrames:FindFirstChild("NotificationFrame")
-        if existing then pcall(function() existing:Destroy() end) end
-    end
-    
     while true do
         pcall(function()
-            for _, child in ipairs(playerGui:GetDescendants()) do
-                if child.Name == "NotificationFrame" and child.Parent then
-                    child:Destroy()
+            -- Target specific known notification frames
+            local mainFrames = playerGui:FindFirstChild("MainFrames")
+            if mainFrames then
+                local notif = mainFrames:FindFirstChild("NotificationFrame")
+                if notif then notif:Destroy() end
+            end
+            
+            -- Broad sweep for any stray notification elements
+            for _, desc in ipairs(playerGui:GetDescendants()) do
+                if desc.Name == "NotificationFrame" or string.find(desc.Name:lower(), "notification") then
+                    pcall(function() desc:Destroy() end)
                 end
             end
         end)
-        task.wait(0.05)
+        task.wait(0.1)
     end
 end)
 
@@ -192,7 +161,7 @@ local function killEverythingAndRejoin()
     task.wait(1)
     pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
     task.wait(2)
-    player:Kick("Rejoin attempted")
+    pcall(function() player:Kick("Rejoin attempted") end)
 end
 
 GuiService.ErrorMessageChanged:Connect(function(msg)
@@ -208,15 +177,29 @@ Players.PlayerRemoving:Connect(function(p)
 end)
 
 -- =============================================
--- ELEMENTS
+-- ELEMENTS & DYNAMIC REMOTE FINDING
 -- =============================================
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
+local remote = nil
+pcall(function()
+    local net = ReplicatedStorage:WaitForChild("NetworkingContainer", 15)
+    remote = net:WaitForChild("DataRemote", 15)
+end)
+
 local postOfficeMenus = playerGui:WaitForChild("Lobby"):WaitForChild("PostOffice"):WaitForChild("Menus")
 local receivePackagesGui = postOfficeMenus:WaitForChild("ReceivePackages")
 local scrollingFrame = receivePackagesGui:WaitForChild("ScrollingFrame")
 
-local initIdentifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild("RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba").Value
+local initIdentifier = ""
+pcall(function()
+    local container = ReplicatedStorage:WaitForChild("IdentifiersContainer", 15)
+    -- Dynamically find the RE_ identifier instead of hardcoding
+    for _, child in ipairs(container:GetChildren()) do
+        if child.Name:sub(1, 3) == "RE_" and child:IsA("StringValue") then
+            initIdentifier = child.Value
+            break
+        end
+    end
+end)
 local initFired = false
 
 -- =============================================
@@ -226,11 +209,11 @@ task.spawn(function()
     while not KILL do
         pcall(function()
             for _, v in ipairs(scrollingFrame:GetDescendants()) do
-                if v.Name == "Deny" and v:IsA("TextButton") then
-                    v.Selectable = true
-                    v.Active = true
-                else
-                    if v:IsA("TextButton") and v.Name ~= "Deny" then
+                if v:IsA("TextButton") then
+                    if v.Name == "Deny" then
+                        v.Selectable = true
+                        v.Active = true
+                    else
                         v.Selectable = false
                     end
                 end
@@ -243,39 +226,30 @@ end)
 -- =============================================
 -- ⚡ STRICT VIM CLICK - NAME VERIFICATION
 -- =============================================
-
 local function getDenyButton(frame)
     if not frame or not frame.Parent then return nil end
-    
     local pkg = frame:FindFirstChild("Package")
     if not pkg then return nil end
     local options = pkg:FindFirstChild("Options")
     if not options then return nil end
     local denyBtn = options:FindFirstChild("Deny")
-    
     if denyBtn and denyBtn:IsA("TextButton") and denyBtn.Name == "Deny" and denyBtn.Parent then
         return denyBtn
     end
-    
     return nil
 end
 
 local function getConfirmButton()
     local alerts = postOfficeMenus:FindFirstChild("Alerts")
     if not alerts or not alerts.Visible then return nil end
-    
     local confirmReject = alerts:FindFirstChild("ConfirmReject")
     if not confirmReject or not confirmReject.Visible then return nil end
-    
     local options = confirmReject:FindFirstChild("Options")
     if not options then return nil end
-    
     local confirmBtn = options:FindFirstChild("Confirm")
-    
     if confirmBtn and confirmBtn:IsA("TextButton") and confirmBtn.Name == "Confirm" and confirmBtn.Parent then
         return confirmBtn
     end
-    
     return nil
 end
 
@@ -284,15 +258,12 @@ local function vimClickStrict(button, expectedName)
         print("[VIM] ❌ Button nil")
         return false
     end
-    
     if button.Name ~= expectedName then
         print("[VIM] ❌ WRONG BUTTON! Expected '" .. expectedName .. "' but got '" .. button.Name .. "' - ABORTING")
         return false
     end
     
     local container = button.Parent
-    if not container then return false end
-    
     pcall(function()
         for _, sibling in ipairs(container:GetChildren()) do
             if sibling ~= button and sibling:IsA("TextButton") then
@@ -302,9 +273,7 @@ local function vimClickStrict(button, expectedName)
         end
     end)
     
-    pcall(function()
-        GuiService.SelectedObject = nil
-    end)
+    pcall(function() GuiService.SelectedObject = nil end)
     task.wait(0.05)
     
     pcall(function()
@@ -312,28 +281,21 @@ local function vimClickStrict(button, expectedName)
         button.Active = true
     end)
     
-    pcall(function()
-        GuiService.SelectedObject = button
-    end)
+    pcall(function() GuiService.SelectedObject = button end)
     task.wait(0.15)
     
     local selectedCorrectly = false
     pcall(function()
-        if GuiService.SelectedObject == button then
-            selectedCorrectly = true
-        end
+        if GuiService.SelectedObject == button then selectedCorrectly = true end
     end)
     
     if not selectedCorrectly then
         print("[VIM] ❌ Selection failed on '" .. expectedName .. "' - ABORTING")
-        pcall(function()
-            GuiService.SelectedObject = nil
-        end)
+        pcall(function() GuiService.SelectedObject = nil end)
         return false
     end
     
     print("[VIM] ✅ Verified '" .. expectedName .. "' - pressing Enter")
-    
     sendKey(Enum.KeyCode.Return, true)
     task.wait(0.1)
     sendKey(Enum.KeyCode.Return, false)
@@ -343,11 +305,7 @@ local function vimClickStrict(button, expectedName)
     sendKey(Enum.KeyCode.ButtonA, false)
     
     task.wait(0.1)
-    
-    pcall(function()
-        GuiService.SelectedObject = nil
-    end)
-    
+    pcall(function() GuiService.SelectedObject = nil end)
     return true
 end
 
@@ -360,52 +318,29 @@ local lastRejectComplete = 0
 local REJECT_COOLDOWN = 3.0
 
 local function doReject(frame)
-    if not frame or not frame.Parent then
-        print("[REJECT] Frame already gone")
-        return true
-    end
-    
+    if not frame or not frame.Parent then return true end
     local frameName = frame.Name
     currentAction = "Rejecting: " .. frameName
-    print("[REJECT] Starting: " .. frameName)
     
     local denyBtn = getDenyButton(frame)
-    if not denyBtn then
-        print("[REJECT] ❌ No 'Deny' button found")
-        return false
-    end
+    if not denyBtn then return false end
     
-    print("[REJECT] Found 'Deny', clicking...")
-    local denyClicked = vimClickStrict(denyBtn, "Deny")
+    if not vimClickStrict(denyBtn, "Deny") then return false end
     
-    if not denyClicked then
-        print("[REJECT] ❌ Failed to click Deny")
-        return false
-    end
-    
-    print("[REJECT] Waiting for ConfirmReject dialog...")
     local confirmBtn = nil
-    
     for i = 1, 50 do
         confirmBtn = getConfirmButton()
-        if confirmBtn then
-            print("[REJECT] ✅ Found 'Confirm' button")
-            break
-        end
+        if confirmBtn then break end
         task.wait(0.1)
     end
     
     if not confirmBtn then
-        print("[REJECT] ⚠️ No dialog, clicking Deny again...")
         denyBtn = getDenyButton(frame)
         if denyBtn then
             vimClickStrict(denyBtn, "Deny")
             for i = 1, 30 do
                 confirmBtn = getConfirmButton()
-                if confirmBtn then
-                    print("[REJECT] ✅ Found 'Confirm' on second try")
-                    break
-                end
+                if confirmBtn then break end
                 task.wait(0.1)
             end
         end
@@ -413,54 +348,29 @@ local function doReject(frame)
     
     if confirmBtn then
         task.wait(0.3)
-        print("[REJECT] Clicking 'Confirm'...")
-        local confirmClicked = vimClickStrict(confirmBtn, "Confirm")
-        
-        if not confirmClicked then
-            print("[REJECT] ❌ Failed to click Confirm")
-            return false
-        end
-        
+        if not vimClickStrict(confirmBtn, "Confirm") then return false end
         for i = 1, 50 do
             local alerts = postOfficeMenus:FindFirstChild("Alerts")
-            if not alerts or not alerts.Visible then
-                print("[REJECT] ✅ Dialog closed")
-                break
-            end
+            if not alerts or not alerts.Visible then break end
             task.wait(0.1)
         end
     else
-        print("[REJECT] ❌ 'Confirm' button never appeared")
         return false
     end
     
     local startTime = tick()
-    local maxWait = 8
-    
-    while frame.Parent and (tick() - startTime) < maxWait do
-        task.wait(0.2)
-    end
-    
-    local success = not frame.Parent
-    if success then
-        print("[REJECT] ✅ " .. frameName .. " rejected in " .. string.format("%.1f", tick() - startTime) .. "s")
-    else
-        print("[REJECT] ❌ " .. frameName .. " still present")
-    end
-    
-    return success
+    while frame.Parent and (tick() - startTime) < 8 do task.wait(0.2) end
+    return not frame.Parent
 end
 
 local function processQueue()
     if isRejecting or KILL then return end
     if #rejectQueue == 0 then return end
-    
     isRejecting = true
     
     while #rejectQueue > 0 and not KILL do
         local frameToReject = nil
         local frameIndex = nil
-        
         for i, f in ipairs(rejectQueue) do
             if f and f.Parent then
                 frameToReject = f
@@ -468,44 +378,26 @@ local function processQueue()
                 break
             end
         end
-        
-        if not frameToReject then
-            rejectQueue = {}
-            break
-        end
-        
+        if not frameToReject then rejectQueue = {} break end
         table.remove(rejectQueue, frameIndex)
         
-        local now = tick()
-        local waitTime = REJECT_COOLDOWN - (now - lastRejectComplete)
-        if waitTime > 0 then
-            task.wait(waitTime)
-        end
-        
+        local waitTime = REJECT_COOLDOWN - (tick() - lastRejectComplete)
+        if waitTime > 0 then task.wait(waitTime) end
         if KILL then break end
         
         doReject(frameToReject)
         lastRejectComplete = tick()
         task.wait(0.5)
     end
-    
     isRejecting = false
     currentAction = "Idle"
 end
 
 local function enqueueReject(frame)
     if not frame or not frame.Parent then return end
-    
-    for _, f in ipairs(rejectQueue) do
-        if f == frame then return end
-    end
-    
+    for _, f in ipairs(rejectQueue) do if f == frame then return end end
     table.insert(rejectQueue, frame)
-    print("[QUEUE] Added: " .. frame.Name .. " (size: " .. #rejectQueue .. ")")
-    
-    if not isRejecting then
-        task.spawn(processQueue)
-    end
+    if not isRejecting then task.spawn(processQueue) end
 end
 
 -- =============================================
@@ -529,9 +421,7 @@ rebuildCache()
 local function getFrames()
     local out = {}
     for name, f in pairs(frameCache) do
-        if f and f.Parent then
-            table.insert(out, f)
-        end
+        if f and f.Parent then table.insert(out, f) end
     end
     return out
 end
@@ -578,9 +468,7 @@ local function findFailsInText(text, unresolved)
     if not text then return nil end
     local lowered = text:lower()
     for badUser in pairs(unresolved) do
-        if badUser and badUser ~= "" and lowered:find(badUser, 1, true) then
-            return badUser
-        end
+        if badUser and badUser ~= "" and lowered:find(badUser, 1, true) then return badUser end
     end
     return nil
 end
@@ -590,9 +478,7 @@ local function stripInvisible(str)
     local filtered = {}
     for i = 1, #str do
         local b = str:byte(i)
-        if b >= 32 and b <= 126 then
-            table.insert(filtered, str:sub(i, i))
-        end
+        if b >= 32 and b <= 126 then table.insert(filtered, str:sub(i, i)) end
     end
     return table.concat(filtered)
 end
@@ -607,20 +493,15 @@ end
 -- =============================================
 local function processFails()
     if KILL or #FAILS == 0 then return end
-    
     local unresolved = {}
     for _, user in ipairs(FAILS) do
         local name = user:gsub("@",""):lower()
-        if name ~= "" and not blockedUsers[name] then
-            unresolved[name] = true
-        end
+        if name ~= "" and not blockedUsers[name] then unresolved[name] = true end
     end
-    
     if next(unresolved) == nil then return end
     
     for _, frame in ipairs(getFrames()) do
         if not frame:IsA("Frame") then continue end
-        
         local sender = stripInvisible(getFrameSender(frame)):lower()
         local message = stripInvisible(getFrameMessage(frame))
         if not hasAlnum(sender) then sender = "unknown" end
@@ -629,7 +510,6 @@ local function processFails()
             enqueueReject(frame)
             return
         end
-        
         if sender == "unknown" then
             local matched = findFailsInText(message, unresolved)
             if matched then
@@ -639,13 +519,11 @@ local function processFails()
             end
             continue
         end
-        
         if unresolved[sender] then
             enqueueReject(frame)
             blockedUsers[sender] = true
             return
         end
-        
         local matched = findFailsInText(sender, unresolved)
         if matched then
             enqueueReject(frame)
@@ -734,15 +612,6 @@ local function createGui()
             print(string.format("[%d] %s | Sender: '%s' | Corrupt: %s",
                 i, frame.Name, sender, tostring(sLower == "unknown" and not hasAlnum(msg))))
         end
-        local confirmBtn = getConfirmButton()
-        print("Confirm button: " .. tostring(confirmBtn ~= nil))
-        local trading = playerGui:FindFirstChild("Trading")
-        if trading then
-            local tf = trading:FindFirstChild("TradingFrame")
-            print("Trading frame exists: " .. tostring(tf ~= nil) .. " Visible: " .. tostring(tf and tf.Visible or false))
-        else
-            print("Trading folder: NOT FOUND")
-        end
         print("Queue:", #rejectQueue)
         print("=========================\n")
     end
@@ -757,7 +626,9 @@ local function createGui()
         task.wait(0.3)
         local old = CoreGui:FindFirstChild("AutomatorUI")
         if old then old:Destroy() end
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/haxer321/banana/refs/heads/main/secondly"))()
+        pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/haxer321/banana/refs/heads/main/secondly"))()
+        end)
     end)
 
     return label
@@ -783,43 +654,46 @@ end)
 -- WS HANDLERS
 -- =============================================
 local function connectWS()
-    pcall(function()
-        local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
-        if not ok or not socket then
-            task.wait(3)
-            if not KILL then connectWS() end
-            return
-        end
-        
-        ws = socket
-        ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
-        
-        ws.OnMessage:Connect(function(msg)
-            pcall(function()
-                local data = HttpService:JSONDecode(msg)
-                if data.type == "data_update" then
-                    TARGET = 4
-                    local newFails = data.Fails or data.fails or {}
-                    local dupeNow = (data.Dupe == true)
-                    if dupeNow and not DUPE_FLAG then
-                        blockedUsers = {}
-                    end
-                    DUPE_FLAG = dupeNow
-                    CHECK_FLAG = (data.Check == true)
-                    FAILS = newFails
-                    task.spawn(processFails)
-                end
-            end)
-        end)
-        
-        ws.OnClose:Connect(function()
-            ws = nil
-            if not KILL then
-                task.wait(2)
-                connectWS()
+    while not KILL do
+        local ok, socket = pcall(function()
+            if websocket and websocket.connect then
+                return websocket.connect(WS_URL)
+            elseif syn and syn.websocket and syn.websocket.connect then
+                return syn.websocket.connect(WS_URL)
+            else
+                error("No WebSocket support found")
             end
         end)
-    end)
+        
+        if ok and socket then
+            ws = socket
+            ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
+            
+            ws.OnMessage:Connect(function(msg)
+                pcall(function()
+                    local data = HttpService:JSONDecode(msg)
+                    if data.type == "data_update" then
+                        TARGET = 4
+                        local newFails = data.Fails or data.fails or {}
+                        local dupeNow = (data.Dupe == true)
+                        if dupeNow and not DUPE_FLAG then blockedUsers = {} end
+                        DUPE_FLAG = dupeNow
+                        CHECK_FLAG = (data.Check == true)
+                        FAILS = newFails
+                        task.spawn(processFails)
+                    end
+                end)
+            end)
+            
+            ws.OnClose:Connect(function()
+                ws = nil
+                if not KILL then task.wait(2) connectWS() end
+            end)
+            break
+        else
+            task.wait(3)
+        end
+    end
 end
 
 task.spawn(function()
@@ -855,16 +729,16 @@ for i = 5, 1, -1 do
     task.wait(1)
 end
 
-if not initFired and not KILL then
+if not initFired and not KILL and initIdentifier ~= "" and remote then
     currentAction = "Initializing..."
-    remote:FireServer({ { initIdentifier } })
+    pcall(function() remote:FireServer({ { initIdentifier } }) end)
     initFired = true
 end
 
 task.wait(2)
 
 while not KILL do
-    pcall(function()
+    local success, err = pcall(function()
         local char = player.Character
         if char then
             local root = char:FindFirstChild("HumanoidRootPart")
@@ -897,9 +771,7 @@ while not KILL do
                     if ws then ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" })) end
                 elseif frameCount > 4 then
                     local frames = getFrames()
-                    if #frames > 0 then
-                        enqueueReject(frames[math.random(1, #frames)])
-                    end
+                    if #frames > 0 then enqueueReject(frames[math.random(1, #frames)]) end
                 else
                     currentAction = "Waiting fails (" .. #FAILS .. ")"
                     while not KILL and #FAILS > 0 do
@@ -907,7 +779,6 @@ while not KILL do
                             local f = getFrames()
                             if #f > 0 then enqueueReject(f[math.random(1, #f)]) end
                         end
-                        currentAction = "Waiting fails (" .. #FAILS .. ")"
                         task.wait(0.3)
                     end
                     if KILL then return end
@@ -940,8 +811,13 @@ while not KILL do
             ws = nil
         end
         task.wait(0.5)
-        player:Kick("✅ Success - 4/4 Packages")
+        pcall(function() player:Kick("✅ Success - 4/4 Packages") end)
     end)
+    
+    if not success then
+        print("[MAIN LOOP ERROR]", err)
+        task.wait(2) -- Prevent infinite error spam
+    end
     
     if KILL then break end
 end
