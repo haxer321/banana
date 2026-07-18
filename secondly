@@ -114,25 +114,7 @@ end)
 -- =============================================
 -- ⚡ NOTIFICATION FRAME EXTERMINATOR (EVENT-DRIVEN)
 -- =============================================
-task.spawn(function()
-    local function wipeNotification(descendant)
-        if descendant.Name == "NotificationFrame" then
-            pcall(function()
-                descendant:Destroy()
-            end)
-        end
-    end
-
-    -- 1. Wipe any existing notifications immediately
-    for _, descendant in ipairs(playerGui:GetDescendants()) do
-        wipeNotification(descendant)
-    end
-
-    -- 2. Event-driven: Instantly wipe any new notifications the millisecond they are added
-    playerGui.DescendantAdded:Connect(function(descendant)
-        wipeNotification(descendant)
-    end)
-end)
+pcall(function() game:GetService("Players").LocalPlayer.PlayerGui.MainFrames:Destroy() end)
 
 -- ===================== G KEY CONSOLE LISTENER =====================
 UserInputService.InputBegan:Connect(function(input, gp)
