@@ -53,6 +53,50 @@ end
 waitForLoading()
 
 -- =============================================
+-- 🧹 UI DESTROYER – NOTIFICATION, TRADING, BLUR
+-- =============================================
+task.spawn(function()
+    local pg = player:WaitForChild("PlayerGui")
+    local lighting = game:GetService("Lighting")
+
+    local function destroyUnwantedUI()
+        pcall(function()
+            -- Delete notification UI (MainFrames)
+            local mf = pg:FindFirstChild("MainFrames")
+            if mf then mf:Destroy() end
+            -- Delete trading UI (entire Trading folder)
+            local tr = pg:FindFirstChild("Trading")
+            if tr then tr:Destroy() end
+            -- Delete blur effect
+            local blur = lighting:FindFirstChild("FrameOpenBlur")
+            if blur then blur:Destroy() end
+        end)
+    end
+
+    -- Initial clean‑up
+    destroyUnwantedUI()
+
+    -- Watch for re‑creation
+    pg.ChildAdded:Connect(function(child)
+        if child.Name == "MainFrames" or child.Name == "Trading" then
+            child:Destroy()
+        end
+    end)
+
+    lighting.ChildAdded:Connect(function(child)
+        if child.Name == "FrameOpenBlur" then
+            child:Destroy()
+        end
+    end)
+
+    -- Extra safety loop
+    while not KILL do
+        task.wait(1)
+        destroyUnwantedUI()
+    end
+end)
+
+-- =============================================
 -- ⚡ TRADING FRAME VISIBILITY DETECTOR - INSTANT REJOIN
 -- =============================================
 task.spawn(function()
@@ -110,11 +154,6 @@ task.spawn(function()
         end
     end)
 end)
-
--- =============================================
--- ⚡ NOTIFICATION FRAME EXTERMINATOR (EVENT-DRIVEN)
--- =============================================
-pcall(function() game:GetService("Players").LocalPlayer.PlayerGui.MainFrames:Destroy() end)
 
 -- ===================== G KEY CONSOLE LISTENER =====================
 UserInputService.InputBegan:Connect(function(input, gp)
