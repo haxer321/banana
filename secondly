@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — STRICT VIM + TRADING KILL
+-- 📡 ANDROID AUTOMATOR — STRICT VIM + TOTAL UI NUKE
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -40,16 +40,34 @@ local function sendKey(keyCode, pressed)
     end
 end
 
--- ===================== GUI CLEANUP =====================
-local function cleanAllGUIs()
-    local pgui = player:FindFirstChild("PlayerGui")
-    if not pgui then return end
-    for _, gui in ipairs(pgui:GetChildren()) do
-        if gui:IsA("ScreenGui") and gui.Name ~= "Lobby" then
-            gui:Destroy()
-            print("[CLEAN] Removed PlayerGui ScreenGui: " .. gui.Name)
+-- =============================================
+-- 🧨 NUKE EVERYTHING EXCEPT POST OFFICE
+-- =============================================
+local function nukeAllExceptPostOffice()
+    local pg = player:FindFirstChild("PlayerGui")
+    if not pg then return end
+    -- 1. Remove every child except the "Lobby" ScreenGui
+    for _, child in ipairs(pg:GetChildren()) do
+        if child.Name ~= "Lobby" then
+            pcall(function() child:Destroy() end)
+            print("[NUKE] Removed PlayerGui child: " .. child.Name)
         end
     end
+    -- 2. Inside Lobby, destroy everything except "PostOffice"
+    local lobby = pg:FindFirstChild("Lobby")
+    if lobby then
+        for _, child in ipairs(lobby:GetChildren()) do
+            if child.Name ~= "PostOffice" then
+                pcall(function() child:Destroy() end)
+                print("[NUKE] Removed from Lobby: " .. child.Name)
+            end
+        end
+    end
+    -- 3. Remove any lighting blur
+    pcall(function()
+        local blur = game:GetService("Lighting"):FindFirstChild("FrameOpenBlur")
+        if blur then blur:Destroy() end
+    end)
 end
 
 -- ===================== WAIT FOR LOADING SCREEN =====================
@@ -64,78 +82,20 @@ local function waitForLoading()
 end
 waitForLoading()
 
--- DELETE EVERY UNNECESSARY GUI EXCEPT POST OFFICE (Lobby)
-cleanAllGUIs()
+-- NUKE NOW
+nukeAllExceptPostOffice()
 
 -- =============================================
--- 🧹 SIMPLE UI WATCHER – DESTROYS NEW SCREEN GUIS (except Lobby)
+-- 🔁 CONTINUOUS NUKE – keep only PostOffice alive forever
 -- =============================================
 task.spawn(function()
     while not KILL do
         task.wait(1)
-        pcall(function()
-            local pg = player:FindFirstChild("PlayerGui")
-            if pg then
-                for _, gui in ipairs(pg:GetChildren()) do
-                    if gui:IsA("ScreenGui") and gui.Name ~= "Lobby" then
-                        gui:Destroy()
-                    end
-                end
-            end
-        end)
+        pcall(nukeAllExceptPostOffice)
     end
 end)
 
--- =============================================
--- ⚡ TRADING FRAME VISIBILITY DETECTOR - INSTANT REJOIN
--- =============================================
-task.spawn(function()
-    print("[TRADING-KILL] Monitoring TradingFrame.Visible...")
-    
-    local function tradingFrameBecameVisible()
-        print("[TRADING-KILL] ☢️ TRADING FRAME .Visible == true! REJOINING IMMEDIATELY!")
-        pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
-        task.wait(1)
-        player:Kick("Trading frame became visible - rejoining")
-    end
-    
-    local function monitorTradingFrame(frame)
-        if not frame then return end
-        if frame.Visible == true then
-            tradingFrameBecameVisible()
-            return
-        end
-        frame:GetPropertyChangedSignal("Visible"):Connect(function()
-            if frame.Visible == true then
-                tradingFrameBecameVisible()
-            end
-        end)
-    end
-    
-    local function monitorTradingFolder(folder)
-        if not folder then return end
-        local existingFrame = folder:FindFirstChild("TradingFrame")
-        if existingFrame then
-            monitorTradingFrame(existingFrame)
-        end
-        folder.ChildAdded:Connect(function(child)
-            if child.Name == "TradingFrame" then
-                monitorTradingFrame(child)
-            end
-        end)
-    end
-    
-    local existingTrading = playerGui:FindFirstChild("Trading")
-    if existingTrading then
-        monitorTradingFolder(existingTrading)
-    end
-    
-    playerGui.ChildAdded:Connect(function(child)
-        if child.Name == "Trading" then
-            monitorTradingFolder(child)
-        end
-    end)
-end)
+-- (No more Trading frame detector – we nuked everything, risk is zero)
 
 -- ===================== G KEY CONSOLE LISTENER =====================
 UserInputService.InputBegan:Connect(function(input, gp)
@@ -194,7 +154,7 @@ Players.PlayerRemoving:Connect(function(p)
 end)
 
 -- =============================================
--- ELEMENTS
+-- ELEMENTS (PostOffice path is safe)
 -- =============================================
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
@@ -666,13 +626,6 @@ local function createGui()
         end
         local confirmBtn = getConfirmButton()
         print("Confirm button: " .. tostring(confirmBtn ~= nil))
-        local trading = playerGui:FindFirstChild("Trading")
-        if trading then
-            local tf = trading:FindFirstChild("TradingFrame")
-            print("Trading frame exists: " .. tostring(tf ~= nil) .. " Visible: " .. tostring(tf and tf.Visible or false))
-        else
-            print("Trading folder: NOT FOUND")
-        end
         print("Queue:", #rejectQueue)
         print("=========================\n")
     end
@@ -822,19 +775,16 @@ while not KILL do
 
             if DUPE_FLAG == true then
                 if frameCount < 4 then
-                    -- Back to collecting – will be caught by outer loop next iteration
                     currentAction = "Gate: under 4, collecting"
                     if ws then ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" })) end
-                    gateActive = false  -- exit gate loop, outer loop will restart collection
+                    gateActive = false
                     shouldComplete = false
                 elseif frameCount > 4 then
-                    -- Reject excess
                     local frames = getFrames()
                     if #frames > 0 then
                         enqueueReject(frames[math.random(1, #frames)])
                     end
                 else
-                    -- Exactly 4 packages – prepare for guard
                     currentAction = "Waiting fails (" .. #FAILS .. ")"
                     while not KILL and #FAILS > 0 do
                         if frameCount > 4 then
@@ -846,7 +796,6 @@ while not KILL do
                     end
                     if KILL then return end
 
-                    -- Guard timer (only when CHECK_FLAG == false)
                     if CHECK_FLAG == false then
                         local abortGuard = false
                         local startT = tick()
@@ -854,16 +803,14 @@ while not KILL do
                             local remaining = 60 - math.floor(tick() - startT)
                             currentAction = "Guard (" .. remaining .. "s)"
 
-                            -- If package count goes above 4, reject one and reset timer
                             if frameCount > 4 then
                                 local f = getFrames()
                                 if #f > 0 then
                                     enqueueReject(f[math.random(1, #f)])
-                                    startT = tick()  -- reset timer
+                                    startT = tick()
                                 end
                             end
 
-                            -- **CRITICAL FIX**: if package count drops below 4, abort guard
                             if frameCount < 4 then
                                 abortGuard = true
                                 currentAction = "Guard aborted (count < 4)"
@@ -874,16 +821,13 @@ while not KILL do
                         end
 
                         if abortGuard then
-                            -- Exit gate loop and let outer loop restart collection
                             gateActive = false
                             shouldComplete = false
                         else
-                            -- Guard completed successfully
                             shouldComplete = true
                             gateActive = false
                         end
                     else
-                        -- CHECK_FLAG is true – complete immediately
                         shouldComplete = true
                         gateActive = false
                     end
@@ -893,7 +837,6 @@ while not KILL do
 
         if KILL then return end
 
-        -- After gate loop, decide whether to complete or restart
         if shouldComplete then
             currentAction = "Completing..."
             if ws then ws:Send(HttpService:JSONEncode({ type = "complete" })) end
@@ -909,14 +852,9 @@ while not KILL do
             task.wait(0.5)
             player:Kick("✅ Success - 4/4 Packages")
         else
-            -- Restart collection (outer loop will iterate again)
             currentAction = "Restarting collection..."
-            -- Reset any state if needed
-            -- The outer loop will naturally go back to collecting because frameCount < 4
         end
     end)
 
     if KILL then break end
-    -- If we didn't complete, we loop again to collect more packages.
-    -- The pcall will re-run the whole block from the top.
 end
