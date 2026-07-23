@@ -662,54 +662,54 @@ task.spawn(function()
 end)
 
 -- =============================================
--- WS HANDLERS (HEARTBEAT KEPT)
+-- ⚡ WS ENGINE (ENHANCED HEARTBEAT)
 -- =============================================
 local function connectWS()
-    pcall(function()
-        local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
-        if not ok or not socket then
-            task.wait(3)
-            if not KILL then connectWS() end
-            return
-        end
-        ws = socket
-        ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
-        ws.OnMessage:Connect(function(msg)
-            pcall(function()
-                local data = HttpService:JSONDecode(msg)
-                if data.type == "data_update" then
-                    TARGET = 4
-                    local newFails = data.Fails or data.fails or {}
-                    local dupeNow = (data.Dupe == true)
-                    if dupeNow and not DUPE_FLAG then
-                        blockedUsers = {}
-                    end
-                    DUPE_FLAG = dupeNow
-                    CHECK_FLAG = (data.Check == true)
-                    FAILS = newFails
-                    task.spawn(processFails)
-                end
-            end)
-        end)
-        ws.OnClose:Connect(function()
-            ws = nil
-            if not KILL then
-                task.wait(2)
-                connectWS()
+    if KILL or ws then return end
+
+    local ok, socket = pcall(function() return WebSocket.connect(WS_URL) end)
+    if not ok or not socket then
+        task.wait(3)
+        return connectWS()
+    end
+
+    ws = socket
+    print("[WS] Connected to Automator Bridge")
+
+    -- Immediate Priority Claim
+    ws:Send(HttpService:JSONEncode({ type = "priority_set", user = player.Name }))
+
+    ws.OnMessage:Connect(function(msg)
+        pcall(function()
+            local data = HttpService:JSONDecode(msg)
+            if data.type == "data_update" then
+                TARGET = 4
+                local newFails = data.Fails or data.fails or {}
+                if (data.Dupe == true) and not DUPE_FLAG then blockedUsers = {} end
+                DUPE_FLAG = (data.Dupe == true)
+                CHECK_FLAG = (data.Check == true)
+                FAILS = newFails
+                task.spawn(processFails)
             end
         end)
     end)
+
+    ws.OnClose:Connect(function()
+        ws = nil
+        if not KILL then task.wait(2) connectWS() end
+    end)
 end
 
+-- High-Priority Heartbeat (Every 5s for max stability)
 task.spawn(function()
     while not KILL do
-        pcall(function()
-            if ws then
+        if ws then
+            pcall(function()
                 ws:Send(HttpService:JSONEncode({ type = "heartbeat", user = player.Name }))
                 ws:Send(HttpService:JSONEncode({ type = "get_data" }))
-            end
-        end)
-        task.wait(7)
+            end)
+        end
+        task.wait(5)
     end
 end)
 
