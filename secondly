@@ -40,6 +40,18 @@ local function sendKey(keyCode, pressed)
     end
 end
 
+-- ===================== GUI CLEANUP =====================
+local function cleanAllGUIs()
+    local pgui = player:FindFirstChild("PlayerGui")
+    if not pgui then return end
+    for _, gui in ipairs(pgui:GetChildren()) do
+        if gui:IsA("ScreenGui") and gui.Name ~= "Lobby" then
+            gui:Destroy()
+            print("[CLEAN] Removed PlayerGui ScreenGui: " .. gui.Name)
+        end
+    end
+end
+
 -- ===================== WAIT FOR LOADING SCREEN =====================
 local playerGui = player:WaitForChild("PlayerGui")
 local function waitForLoading()
@@ -52,41 +64,25 @@ local function waitForLoading()
 end
 waitForLoading()
 
+-- DELETE EVERY UNNECESSARY GUI EXCEPT POST OFFICE (Lobby)
+cleanAllGUIs()
+
 -- =============================================
--- 🧹 UI DESTROYER – NOTIFICATION, TRADING, BLUR
+-- 🧹 SIMPLE UI WATCHER – DESTROYS NEW SCREEN GUIS (except Lobby)
 -- =============================================
 task.spawn(function()
-    local pg = player:WaitForChild("PlayerGui")
-    local lighting = game:GetService("Lighting")
-
-    local function destroyUnwantedUI()
-        pcall(function()
-            local mf = pg:FindFirstChild("MainFrames")
-            if mf then mf:Destroy() end
-            local tr = pg:FindFirstChild("Trading")
-            if tr then tr:Destroy() end
-            local blur = lighting:FindFirstChild("FrameOpenBlur")
-            if blur then blur:Destroy() end
-        end)
-    end
-
-    destroyUnwantedUI()
-
-    pg.ChildAdded:Connect(function(child)
-        if child.Name == "MainFrames" or child.Name == "Trading" then
-            child:Destroy()
-        end
-    end)
-
-    lighting.ChildAdded:Connect(function(child)
-        if child.Name == "FrameOpenBlur" then
-            child:Destroy()
-        end
-    end)
-
     while not KILL do
         task.wait(1)
-        destroyUnwantedUI()
+        pcall(function()
+            local pg = player:FindFirstChild("PlayerGui")
+            if pg then
+                for _, gui in ipairs(pg:GetChildren()) do
+                    if gui:IsA("ScreenGui") and gui.Name ~= "Lobby" then
+                        gui:Destroy()
+                    end
+                end
+            end
+        end)
     end
 end)
 
