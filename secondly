@@ -1,5 +1,5 @@
 -- =============================================
--- 📡 ANDROID AUTOMATOR — STRICT VIM + TOTAL UI NUKE
+-- 📡 ANDROID AUTOMATOR — STRICT VIM + TOTAL UI NUKE (KEEP LOBBY ONLY)
 -- =============================================
 
 if not game:IsLoaded() then game.Loaded:Wait() end
@@ -41,29 +41,18 @@ local function sendKey(keyCode, pressed)
 end
 
 -- =============================================
--- 🧨 NUKE EVERYTHING EXCEPT POST OFFICE
+-- 🧨 NUKE EVERYTHING EXCEPT THE LOBBY SCREENGUI
 -- =============================================
-local function nukeAllExceptPostOffice()
+local function nukeAllExceptLobby()
     local pg = player:FindFirstChild("PlayerGui")
     if not pg then return end
-    -- 1. Remove every child except the "Lobby" ScreenGui
     for _, child in ipairs(pg:GetChildren()) do
         if child.Name ~= "Lobby" then
             pcall(function() child:Destroy() end)
             print("[NUKE] Removed PlayerGui child: " .. child.Name)
         end
     end
-    -- 2. Inside Lobby, destroy everything except "PostOffice"
-    local lobby = pg:FindFirstChild("Lobby")
-    if lobby then
-        for _, child in ipairs(lobby:GetChildren()) do
-            if child.Name ~= "PostOffice" then
-                pcall(function() child:Destroy() end)
-                print("[NUKE] Removed from Lobby: " .. child.Name)
-            end
-        end
-    end
-    -- 3. Remove any lighting blur
+    -- keep lighting blur away as well
     pcall(function()
         local blur = game:GetService("Lighting"):FindFirstChild("FrameOpenBlur")
         if blur then blur:Destroy() end
@@ -83,19 +72,17 @@ end
 waitForLoading()
 
 -- NUKE NOW
-nukeAllExceptPostOffice()
+nukeAllExceptLobby()
 
 -- =============================================
--- 🔁 CONTINUOUS NUKE – keep only PostOffice alive forever
+-- 🔁 CONTINUOUS NUKE – keep only Lobby alive forever
 -- =============================================
 task.spawn(function()
     while not KILL do
         task.wait(1)
-        pcall(nukeAllExceptPostOffice)
+        pcall(nukeAllExceptLobby)
     end
 end)
-
--- (No more Trading frame detector – we nuked everything, risk is zero)
 
 -- ===================== G KEY CONSOLE LISTENER =====================
 UserInputService.InputBegan:Connect(function(input, gp)
@@ -154,7 +141,7 @@ Players.PlayerRemoving:Connect(function(p)
 end)
 
 -- =============================================
--- ELEMENTS (PostOffice path is safe)
+-- ELEMENTS (Lobby is safe – PostOffice inside it)
 -- =============================================
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
@@ -663,7 +650,7 @@ task.spawn(function()
 end)
 
 -- =============================================
--- WS HANDLERS
+-- WS HANDLERS (HEARTBEAT KEPT)
 -- =============================================
 local function connectWS()
     pcall(function()
@@ -706,7 +693,7 @@ task.spawn(function()
     while not KILL do
         pcall(function()
             if ws then
-                ws:Send(HttpService:JSONEncode({ type = "heartbeat", user = player.Name }))
+                ws:Send(HttpService:JSONEncode({ type = "heartbeat", user = player.Name }))  -- HEARTBEAT
                 ws:Send(HttpService:JSONEncode({ type = "get_data" }))
             end
         end)
