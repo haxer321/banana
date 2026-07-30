@@ -41,27 +41,18 @@ local function sendKey(keyCode, pressed)
 end
 
 -- =============================================
--- 🧨 HIDE EVERYTHING EXCEPT THE LOBBY SCREENGUI (NO DESTROY)
+-- 👻 HIDE EVERYTHING EXCEPT THE LOBBY — NO CLOSING, NO DISABLING
 -- =============================================
 local function hideAllExceptLobby()
     local pg = player:FindFirstChild("PlayerGui")
     if not pg then return end
     for _, child in ipairs(pg:GetChildren()) do
         if child.Name ~= "Lobby" then
-            -- Hide and disable the GUI
+            -- Only set Visible = false, nothing else
             pcall(function()
-                -- Set visibility and interactivity for all GUI types
-                if child:IsA("GuiObject") or child:IsA("ScreenGui") or child:IsA("Frame") then
+                if child:IsA("GuiObject") or child:IsA("ScreenGui") then
                     child.Visible = false
                 end
-                if child:IsA("GuiObject") then
-                    child.Active = false
-                    child.Selectable = false
-                end
-                if child:IsA("ScreenGui") then
-                    child.Enabled = false
-                end
-                -- If it's a script, we can't disable it, but the GUI container is now hidden
             end)
             print("[HIDE] Hidden PlayerGui child: " .. child.Name)
         end
@@ -89,7 +80,7 @@ waitForLoading()
 hideAllExceptLobby()
 
 -- =============================================
--- 🔁 CONTINUOUS HIDE – keep only Lobby alive forever
+-- 🔁 CONTINUOUS HIDE – keep only Lobby visible
 -- =============================================
 task.spawn(function()
     while not KILL do
