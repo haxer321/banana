@@ -45,7 +45,6 @@ end
 -- 👻 TOTAL UI NUKE (keep only Lobby, never destroy)
 -- =============================================
 local function nukeUI()
-    -- Hide built‑in Roblox UI (chat, top bar, etc.) – they stay loaded
     pcall(function()
         StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.All, false)
     end)
@@ -55,7 +54,6 @@ local function nukeUI()
     for _, child in ipairs(pg:GetChildren()) do
         if child.Name ~= "Lobby" then
             pcall(function()
-                -- Hide and disable, but do NOT destroy
                 if child:IsA("GuiObject") or child:IsA("ScreenGui") then
                     child.Visible = false
                 end
@@ -66,7 +64,6 @@ local function nukeUI()
                     child.Active = false
                     child.Selectable = false
                 end
-                -- Disable all descendants too
                 for _, desc in ipairs(child:GetDescendants()) do
                     if desc:IsA("GuiObject") then
                         desc.Active = false
@@ -80,7 +77,6 @@ local function nukeUI()
         end
     end
 
-    -- Remove any blur effect (optional)
     pcall(function()
         local blur = game:GetService("Lighting"):FindFirstChild("FrameOpenBlur")
         if blur then blur:Destroy() end
@@ -99,13 +95,11 @@ local function waitForLoading()
 end
 waitForLoading()
 
--- Nuke immediately
 nukeUI()
 
--- Continuous nuke loop (catches new GUIs, keeps them hidden but alive)
 task.spawn(function()
     while not KILL do
-        task.wait(1)
+        task.wait(0.5)
         pcall(nukeUI)
     end
 end)
@@ -281,19 +275,27 @@ local function vimClickStrict(button, expectedName)
 end
 
 -- =============================================
--- ⚡ REJECTION QUEUE
+-- ⚡ REJECTION (DIRECT, NO QUEUE)
 -- =============================================
-local rejectQueue = {}
-local isRejecting = false
-local lastRejectComplete = 0
-local REJECT_COOLDOWN = 3.0
+local lastRejectTime = 0
+local REJECT_COOLDOWN = 2.0
 
-local function doReject(frame)
-    if not frame or not frame.Parent then return true end
+local function rejectFrame(frame)
+    if not frame or not frame.Parent then return false end
+    local now = tick()
+    if now - lastRejectTime < REJECT_COOLDOWN then
+        return false
+    end
+
     currentAction = "Rejecting: "..frame.Name
     local denyBtn = getDenyButton(frame)
-    if not denyBtn then return false end
-    if not vimClickStrict(denyBtn, "Deny") then return false end
+    if not denyBtn then
+        return false
+    end
+
+    if not vimClickStrict(denyBtn, "Deny") then
+        return false
+    end
 
     local confirmBtn = nil
     for i = 1, 50 do
@@ -302,7 +304,6 @@ local function doReject(frame)
         task.wait(0.1)
     end
     if not confirmBtn then
-        -- second try
         denyBtn = getDenyButton(frame)
         if denyBtn then
             vimClickStrict(denyBtn, "Deny")
@@ -313,9 +314,12 @@ local function doReject(frame)
             end
         end
     end
+
     if confirmBtn then
         task.wait(0.3)
-        if not vimClickStrict(confirmBtn, "Confirm") then return false end
+        if not vimClickStrict(confirmBtn, "Confirm") then
+            return false
+        end
         for i = 1, 50 do
             local alerts = postOfficeMenus:FindFirstChild("Alerts")
             if not alerts or not alerts.Visible then break end
@@ -326,46 +330,15 @@ local function doReject(frame)
     end
 
     local start = tick()
-    while frame.Parent and tick() - start < 8 do task.wait(0.2) end
-    return not frame.Parent
-end
-
-local function processQueue()
-    if isRejecting or KILL then return end
-    isRejecting = true
-    while #rejectQueue > 0 and not KILL do
-        local frame = nil
-        for i, f in ipairs(rejectQueue) do
-            if f and f.Parent then
-                frame = f
-                table.remove(rejectQueue, i)
-                break
-            end
-        end
-        if not frame then
-            rejectQueue = {}
-            break
-        end
-        local now = tick()
-        local waitTime = REJECT_COOLDOWN - (now - lastRejectComplete)
-        if waitTime > 0 then task.wait(waitTime) end
-        doReject(frame)
-        lastRejectComplete = tick()
-        task.wait(0.5)
+    while frame.Parent and tick() - start < 8 do
+        task.wait(0.2)
     end
-    isRejecting = false
-    currentAction = "Idle"
-end
-
-local function enqueueReject(frame)
-    if not frame or not frame.Parent then return end
-    for _, f in ipairs(rejectQueue) do
-        if f == frame then return end
+    local success = not frame.Parent
+    if success then
+        lastRejectTime = tick()
+        currentAction = "Rejected: "..frame.Name
     end
-    table.insert(rejectQueue, frame)
-    if not isRejecting then
-        task.spawn(processQueue)
-    end
+    return success
 end
 
 -- =============================================
@@ -451,11 +424,33 @@ local function hasAlnum(str)
     return str:match("%w") ~= nil
 end
 
+local function isCorrupted(frame)
+    local sender = stripInvisible(getFrameSender(frame)):lower()
+    local message = stripInvisible(getFrameMessage(frame))
+    return sender == "unknown" and not hasAlnum(message)
+end
+
 -- =============================================
--- ⚡ FAIL PROCESSOR
+-- ⚡ FAIL PROCESSOR (DIRECT, NO QUEUE)
 -- =============================================
+local currentState = "COLLECT"  -- we'll sync this from main loop
+
 local function processFails()
-    if KILL or #FAILS == 0 then return end
+    if KILL then return end
+
+    -- 1. Corrupted packages: reject only if NOT in TIMER state
+    if currentState ~= "TIMER" then
+        for _, frame in ipairs(getFrames()) do
+            if frame:IsA("Frame") and isCorrupted(frame) then
+                print("[CORRUPT] Rejecting corrupted package: "..frame.Name)
+                rejectFrame(frame)
+                return
+            end
+        end
+    end
+
+    -- 2. Server‑sent fails (always processed)
+    if #FAILS == 0 then return end
     local unresolved = {}
     for _, user in ipairs(FAILS) do
         local name = user:gsub("@",""):lower()
@@ -464,38 +459,35 @@ local function processFails()
         end
     end
     if next(unresolved) == nil then return end
+
     for _, frame in ipairs(getFrames()) do
         if not frame:IsA("Frame") then continue end
         local sender = stripInvisible(getFrameSender(frame)):lower()
         local message = stripInvisible(getFrameMessage(frame))
-        if not hasAlnum(sender) then sender = "unknown" end
-        if sender == "unknown" and not hasAlnum(message) then
-            enqueueReject(frame)
-            return
-        end
         if sender == "unknown" then
-            local matched = nil
             for badUser in pairs(unresolved) do
-                if badUser and message:find(badUser, 1, true) then
-                    matched = badUser
-                    break
+                if message:find(badUser, 1, true) then
+                    print("[FAIL] Found fail '"..badUser.."' in message, rejecting and blacklisting")
+                    if rejectFrame(frame) then
+                        blockedUsers[badUser] = true
+                    end
+                    return
                 end
-            end
-            if matched then
-                enqueueReject(frame)
-                blockedUsers[matched] = true
-                return
             end
         else
             if unresolved[sender] then
-                enqueueReject(frame)
-                blockedUsers[sender] = true
+                print("[FAIL] Sender '"..sender.."' is in fails, rejecting and blacklisting")
+                if rejectFrame(frame) then
+                    blockedUsers[sender] = true
+                end
                 return
             end
             for badUser in pairs(unresolved) do
                 if sender:find(badUser, 1, true) then
-                    enqueueReject(frame)
-                    blockedUsers[badUser] = true
+                    print("[FAIL] Sender '"..sender.."' contains fail '"..badUser.."', rejecting and blacklisting")
+                    if rejectFrame(frame) then
+                        blockedUsers[badUser] = true
+                    end
                     return
                 end
             end
@@ -551,13 +543,12 @@ local function createGui()
         for i, frame in ipairs(getFrames()) do
             local sender = stripInvisible(getFrameSender(frame))
             local msg = stripInvisible(getFrameMessage(frame))
-            local sLower = sender:lower()
-            if not hasAlnum(sLower) then sLower = "unknown" end
             print(string.format("[%d] %s | Sender: '%s' | Corrupt: %s",
-                i, frame.Name, sender, tostring(sLower == "unknown" and not hasAlnum(msg))))
+                i, frame.Name, sender, tostring(isCorrupted(frame))))
         end
-        print("Confirm button:", getConfirmButton() ~= nil)
-        print("Queue:", #rejectQueue)
+        print("Fails:", table.concat(FAILS, ", "))
+        print("Blocked:", table.concat(blockedUsers, ", "))
+        print("State:", currentState)
         print("=========================\n")
     end
 
@@ -579,14 +570,20 @@ end
 
 local guiLabel = createGui()
 
+local function tablelength(t)
+    local count = 0
+    for _ in pairs(t) do count = count + 1 end
+    return count
+end
+
 task.spawn(function()
     while not KILL do
         pcall(function()
             guiLabel.Text = string.format(
-                "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s\nQUEUE: %d",
+                "PKGS: %d / %d\nDUPE: %s\nCHECK: %s\nFAILS: %d\nLOG: %s\nBLOCKED: %d",
                 frameCount, TARGET,
                 tostring(DUPE_FLAG), tostring(CHECK_FLAG),
-                #FAILS, currentAction, #rejectQueue
+                #FAILS, currentAction, tablelength(blockedUsers)
             )
         end)
         task.wait(0.15)
@@ -669,9 +666,18 @@ end
 task.wait(2)
 
 -- State machine
-local state = "COLLECT"  -- COLLECT, WAIT_DUPE, TIMER, COMPLETE
+local state = "COLLECT"
 local timerStart = 0
 local timerDuration = 60
+
+-- Background fail processor (updates currentState for the processor)
+task.spawn(function()
+    while not KILL do
+        currentState = state  -- sync the state variable
+        pcall(processFails)
+        task.wait(0.5)
+    end
+end)
 
 while not KILL do
     pcall(function()
@@ -686,51 +692,42 @@ while not KILL do
             currentAction = "Collecting: "..frameCount.."/"..TARGET
             if ws then ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Start" })) end
 
-            -- Wait until we have at least TARGET packages
             while not KILL and frameCount < TARGET do
                 currentAction = "Collecting: "..frameCount.."/"..TARGET
                 task.wait(0.3)
             end
             if KILL then return end
 
-            -- Reached target → stop generation
             if ws then ws:Send(HttpService:JSONEncode({ type = "set_state", value = "Stop" })) end
             currentAction = "Reached "..TARGET..", waiting for dupe..."
             state = "WAIT_DUPE"
 
         elseif state == "WAIT_DUPE" then
-            -- Wait until DUPE_FLAG becomes true
             while not KILL and not DUPE_FLAG do
                 currentAction = "Waiting for dupe..."
                 task.wait(0.3)
             end
             if KILL then return end
 
-            -- Dupe is true – decide next step
             if CHECK_FLAG then
-                -- Check flag is true → complete immediately
                 state = "COMPLETE"
             else
-                -- Start the 60‑second timer phase
                 currentAction = "Timer phase starting..."
                 timerStart = tick()
                 state = "TIMER"
             end
 
         elseif state == "TIMER" then
-            -- Reject extras during the timer, keep exactly 4
             while not KILL and (tick() - timerStart) < timerDuration do
                 currentAction = string.format("Timer: %.1f/60s  (pkgs: %d)", tick() - timerStart, frameCount)
 
-                -- If we have more than 4, reject one random extra
                 if frameCount > TARGET then
                     local frames = getFrames()
                     if #frames > 0 then
-                        enqueueReject(frames[math.random(1, #frames)])
+                        rejectFrame(frames[math.random(1, #frames)])
                     end
                 end
 
-                -- If we drop below 4, abort and restart collecting
                 if frameCount < TARGET then
                     currentAction = "Timer aborted – count dropped below 4"
                     state = "COLLECT"
@@ -740,7 +737,6 @@ while not KILL do
                 task.wait(0.3)
             end
 
-            -- If timer completed without aborting, complete
             if state == "TIMER" then
                 state = "COMPLETE"
             end
@@ -759,10 +755,9 @@ while not KILL do
             end
             task.wait(0.5)
             player:Kick("✅ Success – 4/4 Packages")
-            return  -- end script
+            return
 
         else
-            -- fallback
             state = "COLLECT"
         end
     end)
