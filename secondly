@@ -41,18 +41,32 @@ local function sendKey(keyCode, pressed)
 end
 
 -- =============================================
--- 🧨 NUKE EVERYTHING EXCEPT THE LOBBY SCREENGUI
+-- 🧨 HIDE EVERYTHING EXCEPT THE LOBBY SCREENGUI (NO DESTROY)
 -- =============================================
-local function nukeAllExceptLobby()
+local function hideAllExceptLobby()
     local pg = player:FindFirstChild("PlayerGui")
     if not pg then return end
     for _, child in ipairs(pg:GetChildren()) do
         if child.Name ~= "Lobby" then
-            pcall(function() child:Destroy() end)
-            print("[NUKE] Removed PlayerGui child: " .. child.Name)
+            -- Hide and disable the GUI
+            pcall(function()
+                -- Set visibility and interactivity for all GUI types
+                if child:IsA("GuiObject") or child:IsA("ScreenGui") or child:IsA("Frame") then
+                    child.Visible = false
+                end
+                if child:IsA("GuiObject") then
+                    child.Active = false
+                    child.Selectable = false
+                end
+                if child:IsA("ScreenGui") then
+                    child.Enabled = false
+                end
+                -- If it's a script, we can't disable it, but the GUI container is now hidden
+            end)
+            print("[HIDE] Hidden PlayerGui child: " .. child.Name)
         end
     end
-    -- keep lighting blur away as well
+    -- Keep lighting blur away as well (optional)
     pcall(function()
         local blur = game:GetService("Lighting"):FindFirstChild("FrameOpenBlur")
         if blur then blur:Destroy() end
@@ -71,16 +85,16 @@ local function waitForLoading()
 end
 waitForLoading()
 
--- NUKE NOW
-nukeAllExceptLobby()
+-- HIDE NOW
+hideAllExceptLobby()
 
 -- =============================================
--- 🔁 CONTINUOUS NUKE – keep only Lobby alive forever
+-- 🔁 CONTINUOUS HIDE – keep only Lobby alive forever
 -- =============================================
 task.spawn(function()
     while not KILL do
         task.wait(1)
-        pcall(nukeAllExceptLobby)
+        pcall(hideAllExceptLobby)
     end
 end)
 
