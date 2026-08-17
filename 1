@@ -37,6 +37,32 @@ task.spawn(function()
 end)
 
 -- ==================== WEBSOCKET LIBRARY (with fallback) ====================
+--  (THIS IS THE MISSING BLOCK – RE-INSERTED)
+local websocket = nil
+local wsAvailable = false
+print("[DEBUG] Loading WebSocket library...")
+local success, err = pcall(function()
+    websocket = loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/WebSocket/main/WebSocket.lua"))()
+end)
+if not success or not websocket then
+    warn("[WS] Failed to load WebSocket library:", err)
+    print("[WS] Using mock WebSocket (no real connection)")
+    websocket = {
+        connect = function(url)
+            print("[WS MOCK] Would connect to " .. url)
+            return {
+                Send = function(self, msg) print("[WS MOCK] Send:", msg) end,
+                OnMessage = { Connect = function(self, cb) end },
+                OnClose = { Connect = function(self, cb) end },
+                Close = function(self) end
+            }
+        end
+    }
+    wsAvailable = false
+else
+    print("[WS] WebSocket library loaded")
+    wsAvailable = true
+end
 
 -- ==================== INTENTIONAL KICK FLAG ====================
 local hasLeft = false
