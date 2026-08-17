@@ -18,8 +18,6 @@ local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
 -- ==================== LOAD WEBSOCKET LIBRARY ====================
--- This loads the same websocket library that works with the example.
--- Replace the URL with a reliable one if needed.
 local websocket = loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/WebSocket/main/WebSocket.lua"))()
 if not websocket then
     error("Failed to load WebSocket library")
@@ -78,7 +76,6 @@ local PostOffice = waitForChildWithTimeout(Lobby, "PostOffice", 30)
 local Menus = waitForChildWithTimeout(PostOffice, "Menus", 30)
 local ReceivePackages = waitForChildWithTimeout(Menus, "ReceivePackages", 30)
 local guiPath = waitForChildWithTimeout(ReceivePackages, "ScrollingFrame", 30)
-
 print("[INFO] GUI path found")
 
 -- ==================== NETWORKING ====================
@@ -88,7 +85,7 @@ local idValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForCh
 ).Value
 local staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
 
--- ==================== WEBSOCKET SETUP ====================
+-- ==================== WEBSOCKET SETUP (NON-BLOCKING) ====================
 local WS_URL = "ws://192.168.1.14:8080"  -- CHANGE TO YOUR SERVER IP
 local ws = nil
 local wsConnected = false
@@ -97,24 +94,22 @@ local sentRecovered = false
 local readyToRejoin = false
 local watchdogConnection = nil
 
-local function setupWebSocket()
+-- This function will run in a separate thread
+local function connectWebSocket()
+    print("[WS] Attempting to connect to " .. WS_URL)
     local success, result = pcall(function()
-        return websocket.connect(WS_URL)  -- Note: websocket, not WebSocket
+        return websocket.connect(WS_URL)
     end)
-
     if success and result then
         ws = result
         wsConnected = true
         print("[WS] Connected to server")
-
         ws:Send(HttpService:JSONEncode({ type = "client_ready" }))
-
         ws.OnMessage:Connect(function(msg)
             local ok, data = pcall(function()
                 return HttpService:JSONDecode(msg)
             end)
             if not ok or not data then return end
-
             if data.type == "state" and data.state then
                 local state = data.state
                 local dupe = state.Dupe
@@ -122,7 +117,6 @@ local function setupWebSocket()
                 local busy = state.Busy
                 print(string.format("[WS] State - Dupe: %s, Check: %s, Busy: %s",
                     tostring(dupe), tostring(check), tostring(busy)))
-
                 if hasLeft and not readyToRejoin then
                     if check == true and busy == false then
                         print("[WS] Check=true & Busy=false! Ready to rejoin.")
@@ -137,25 +131,23 @@ local function setupWebSocket()
                 print(string.format("[WS] Event: %s", data.event))
             end
         end)
-
         ws.OnClose:Connect(function()
             wsConnected = false
             ws = nil
             print("[WS] Disconnected, reconnecting in 5s...")
             task.wait(5)
-            setupWebSocket()
+            connectWebSocket()
         end)
-
-        return true
     else
         print("[WS] Failed to connect:", tostring(result))
+        print("[WS] Retrying in 5s...")
         task.wait(5)
-        setupWebSocket()
-        return false
+        connectWebSocket()
     end
 end
 
-setupWebSocket()
+-- Start the WebSocket connection in a separate thread (non-blocking)
+task.spawn(connectWebSocket)
 setupAutoRejoin()
 
 -- ==================== SEND HELPERS ====================
@@ -243,7 +235,7 @@ while task.wait() do
     local leaderstats = player:FindFirstChild("leaderstats")
     local gems = leaderstats and leaderstats:FindFirstChild("Gems")
 
-    -- SUCCESS: reached 5M gems (change threshold if needed)
+    -- SUCCESS: reached 5M gems
     if gems and gems.Value == 2500000 then
         if not sentRecovered and not hasLeft then
             print(string.format("[MAIN] Gems = %d - RECOVERED!", gems.Value))
