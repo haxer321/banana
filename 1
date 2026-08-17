@@ -1,14 +1,14 @@
 -- ==================== VERSION ====================
-local SCRIPT_VERSION = "2.0-DEBUG"
+local SCRIPT_VERSION = "2.1-DEBUG-FIX"
 print(string.format("[DEBUG] Script version: %s", SCRIPT_VERSION))
+print("[DEBUG] Script started")
 
--- SERVICES
+-- ==================== SERVICES ====================
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
-
 print("[DEBUG] Services loaded")
 
 if not game:IsLoaded() then
@@ -17,24 +17,51 @@ if not game:IsLoaded() then
     print("[DEBUG] Game loaded")
 end
 
--- Load Anti-AFK
-task.spawn(function() 
-    print("[DEBUG] Loading Anti-AFK...")
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))() 
-end)
-
 local player = Players.LocalPlayer
 print(string.format("[DEBUG] LocalPlayer: %s", player and player.Name or "nil"))
 local PlayerGui = player:WaitForChild("PlayerGui")
 print("[DEBUG] PlayerGui found")
 
--- ==================== LOAD WEBSOCKET LIBRARY ====================
+-- ==================== ANTI-AFK (with error handling) ====================
+task.spawn(function()
+    print("[DEBUG] Loading Anti-AFK...")
+    local success, err = pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))()
+    end)
+    if not success then
+        warn("[ANTI-AFK] Failed to load:", err)
+        print("[ANTI-AFK] Continuing without anti-afk")
+    else
+        print("[ANTI-AFK] Loaded successfully")
+    end
+end)
+
+-- ==================== WEBSOCKET LIBRARY (with fallback) ====================
+local websocket = nil
+local wsAvailable = false
 print("[DEBUG] Loading WebSocket library...")
-local websocket = loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/WebSocket/main/WebSocket.lua"))()
-if not websocket then
-    error("Failed to load WebSocket library")
+local success, err = pcall(function()
+    websocket = loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/WebSocket/main/WebSocket.lua"))()
+end)
+if not success or not websocket then
+    warn("[WS] Failed to load WebSocket library:", err)
+    print("[WS] Using mock WebSocket (no real connection)")
+    websocket = {
+        connect = function(url)
+            print("[WS MOCK] Would connect to " .. url)
+            return {
+                Send = function(self, msg) print("[WS MOCK] Send:", msg) end,
+                OnMessage = { Connect = function(self, cb) end },
+                OnClose = { Connect = function(self, cb) end },
+                Close = function(self) end
+            }
+        end
+    }
+    wsAvailable = false
+else
+    print("[WS] WebSocket library loaded")
+    wsAvailable = true
 end
-print("[WS] WebSocket library loaded")
 
 -- ==================== INTENTIONAL KICK FLAG ====================
 local hasLeft = false
@@ -79,32 +106,29 @@ else
     print("[DEBUG] No LoadingGui found")
 end
 
--- ==================== SAFE GUI PATH ====================
-local function waitForChildWithTimeout(parent, childName, timeout)
+-- ==================== GUI PATH (using WaitForChild with timeout) ====================
+local function safeWaitForChild(parent, childName, timeout)
     timeout = timeout or 30
     print(string.format("[DEBUG] Waiting for %s in %s (timeout: %ds)", childName, parent.Name, timeout))
-    local start = tick()
-    while tick() - start < timeout do
-        local child = parent:FindFirstChild(childName)
-        if child then
-            print(string.format("[DEBUG] Found %s in %s", childName, parent.Name))
-            return child
-        end
-        task.wait(0.5)
+    local child = parent:WaitForChild(childName, timeout)
+    if child then
+        print(string.format("[DEBUG] Found %s", childName))
+        return child
+    else
+        error(string.format("Timeout waiting for %s in %s", childName, parent.Name))
     end
-    error(string.format("Timeout waiting for %s in %s", childName, parent.Name))
 end
 
 print("[DEBUG] Waiting for Lobby...")
-local Lobby = waitForChildWithTimeout(PlayerGui, "Lobby", 30)
+local Lobby = safeWaitForChild(PlayerGui, "Lobby", 30)
 print("[DEBUG] Waiting for PostOffice...")
-local PostOffice = waitForChildWithTimeout(Lobby, "PostOffice", 30)
+local PostOffice = safeWaitForChild(Lobby, "PostOffice", 30)
 print("[DEBUG] Waiting for Menus...")
-local Menus = waitForChildWithTimeout(PostOffice, "Menus", 30)
+local Menus = safeWaitForChild(PostOffice, "Menus", 30)
 print("[DEBUG] Waiting for ReceivePackages...")
-local ReceivePackages = waitForChildWithTimeout(Menus, "ReceivePackages", 30)
+local ReceivePackages = safeWaitForChild(Menus, "ReceivePackages", 30)
 print("[DEBUG] Waiting for ScrollingFrame...")
-local guiPath = waitForChildWithTimeout(ReceivePackages, "ScrollingFrame", 30)
+local guiPath = safeWaitForChild(ReceivePackages, "ScrollingFrame", 30)
 print("[INFO] GUI path found")
 
 -- ==================== NETWORKING ====================
@@ -116,7 +140,7 @@ local idValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForCh
 local staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
 print("[DEBUG] Remote and identifiers set")
 
--- ==================== WEBSOCKET SETUP (NON-BLOCKING) ====================
+-- ==================== WEBSOCKET CONNECTION (NON-BLOCKING) ====================
 local WS_URL = "ws://192.168.1.14:8080"  -- CHANGE TO YOUR SERVER IP
 local ws = nil
 local wsConnected = false
@@ -126,6 +150,10 @@ local readyToRejoin = false
 local watchdogConnection = nil
 
 local function connectWebSocket()
+    if not wsAvailable then
+        print("[WS] WebSocket library unavailable, not connecting")
+        return
+    end
     print(string.format("[DEBUG] Attempting WebSocket connection to %s", WS_URL))
     local success, result = pcall(function()
         return websocket.connect(WS_URL)
@@ -176,7 +204,6 @@ local function connectWebSocket()
     end
 end
 
--- Start WebSocket in separate thread
 task.spawn(connectWebSocket)
 print("[DEBUG] WebSocket connection thread started")
 
