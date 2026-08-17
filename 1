@@ -11,7 +11,6 @@ local GuiService = game:GetService("GuiService")
 local player = Players.LocalPlayer
 
 -- ==================== LOAD WEBSOCKET ====================
-local websocket = loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/WebSocket/main/WebSocket.lua"))()
 if not websocket then
     error("WebSocket library failed to load")
 end
