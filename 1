@@ -36,32 +36,15 @@ task.spawn(function()
     end
 end)
 
--- ==================== WEBSOCKET LIBRARY (with fallback) ====================
---  (THIS IS THE MISSING BLOCK – RE-INSERTED)
-local websocket = nil
-local wsAvailable = false
-print("[DEBUG] Loading WebSocket library...")
-local success, err = pcall(function()
-    websocket = loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/WebSocket/main/WebSocket.lua"))()
-end)
-if not success or not websocket then
-    warn("[WS] Failed to load WebSocket library:", err)
-    print("[WS] Using mock WebSocket (no real connection)")
-    websocket = {
-        connect = function(url)
-            print("[WS MOCK] Would connect to " .. url)
-            return {
-                Send = function(self, msg) print("[WS MOCK] Send:", msg) end,
-                OnMessage = { Connect = function(self, cb) end },
-                OnClose = { Connect = function(self, cb) end },
-                Close = function(self) end
-            }
-        end
-    }
-    wsAvailable = false
-else
-    print("[WS] WebSocket library loaded")
-    wsAvailable = true
+-- ==================== WEBSOCKET LIBRARY ====================
+--  !! No loading block – we assume `websocket` and `wsAvailable` are already
+--     defined globally (e.g. from another script).  If they are not, this
+--     script will not connect.
+if not websocket then
+    warn("[WS] Global 'websocket' is nil – WebSocket will not work.")
+end
+if not wsAvailable then
+    warn("[WS] Global 'wsAvailable' is false – WebSocket will not work.")
 end
 
 -- ==================== INTENTIONAL KICK FLAG ====================
@@ -152,7 +135,11 @@ local watchdogConnection = nil
 
 local function connectWebSocket()
     if not wsAvailable then
-        print("[WS] WebSocket library unavailable, not connecting")
+        print("[WS] WebSocket library unavailable (wsAvailable is false) – not connecting")
+        return
+    end
+    if not websocket then
+        print("[WS] Global 'websocket' is nil – cannot connect")
         return
     end
     print(string.format("[DEBUG] Attempting WebSocket connection to %s", WS_URL))
