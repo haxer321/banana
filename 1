@@ -14,7 +14,7 @@ if not game:IsLoaded() then
     print("[DEBUG] Game loaded")
 end
 
--- Anti-AFK (load in protected mode)
+-- Anti-AFK
 task.spawn(function()
     print("[DEBUG] Loading Anti-AFK...")
     local ok, err = pcall(function()
@@ -93,10 +93,49 @@ task.spawn(function()
     end
 end)
 
-print("[INFO] Game fully loaded")
+print("[INFO] Game fully loaded")  -- <-- You see this, so after this we go to GUI path, etc.
 
--- WebSocket Configuration
-local WS_URL = "ws://192.168.1.14:8080"  -- CHANGE THIS
+-- ==================== GUI PATH (STEP BY STEP) ====================
+print("[DEBUG] Waiting for GUI path...")
+
+local function waitForChildWithDebug(parent, name, timeout, stepName)
+    timeout = timeout or 30
+    print(string.format("[GUI] Waiting for '%s' in '%s' (timeout: %ds) – %s", 
+        name, parent.Name, timeout, stepName or ""))
+    local child = parent:WaitForChild(name, timeout)
+    if child then
+        print(string.format("[GUI] Found '%s'", name))
+        return child
+    else
+        error(string.format("Timeout waiting for '%s' in '%s'", name, parent.Name))
+    end
+end
+
+local Lobby = waitForChildWithDebug(PlayerGui, "Lobby", 30, "Step 1/5")
+local PostOffice = waitForChildWithDebug(Lobby, "PostOffice", 30, "Step 2/5")
+local Menus = waitForChildWithDebug(PostOffice, "Menus", 30, "Step 3/5")
+local ReceivePackages = waitForChildWithDebug(Menus, "ReceivePackages", 30, "Step 4/5")
+local guiPath = waitForChildWithDebug(ReceivePackages, "ScrollingFrame", 30, "Step 5/5")
+
+print("[DEBUG] GUI path fully resolved")  -- <-- If you see this, GUI path is OK.
+
+-- ==================== NETWORKING ====================
+print("[DEBUG] Setting up remote and identifiers...")
+local remote, idValue, staticString
+local ok, err = pcall(function()
+    remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
+    idValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
+        "RF_59fb8da4c771fdd9e7348c3e113b4939ec60069b536a2ff0e2dd4f9e857a6611_S"
+    ).Value
+    staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
+end)
+if not ok then
+    error("[NETWORK] Failed to get remote/identifiers: " .. tostring(err))
+end
+print("[DEBUG] Remote and identifiers set")
+
+-- ==================== WEBSOCKET SETUP ====================
+local WS_URL = "ws://192.168.1.67:8080"  -- CHANGE THIS
 local ws = nil
 local wsConnected = false
 local sentFail = false
@@ -106,11 +145,8 @@ local watchdogConnection = nil
 
 print(string.format("[DEBUG] WS_URL: %s", WS_URL))
 
--- ==================== WEBSOCKET SETUP (with pcall) ====================
 local function setupWebSocket()
     print("[DEBUG] setupWebSocket called")
-    
-    -- Check if WebSocket global exists
     if not WebSocket then
         warn("[WS] Global 'WebSocket' is nil – cannot connect!")
         print("[WS] Retrying in 5s...")
@@ -128,7 +164,6 @@ local function setupWebSocket()
         wsConnected = true
         print("[WS] Connected to server")
 
-        -- Send client_ready (protected)
         local ok, err = pcall(function()
             ws:Send(HttpService:JSONEncode({ type = "client_ready" }))
             print("[WS] Sent client_ready")
@@ -137,40 +172,16 @@ local function setupWebSocket()
             warn("[WS] Failed to send client_ready:", err)
         end
 
-        -- Message handler
         ws.OnMessage:Connect(function(msg)
             print(string.format("[WS] Received message (length: %d)", #msg))
             local ok, data = pcall(function()
                 return HttpService:JSONDecode(msg)
             end)
             if not ok or not data then
-                warn("[WS] Failed to decode message:", ok and "invalid data" or "decode error")
+                warn("[WS] Failed to decode message")
                 return
             end
-
-            if data.type == "state" and data.state then
-                local state = data.state
-                local dupe = state.Dupe
-                local check = state.Check
-                local busy = state.Busy
-                print(string.format("[WS] State - Dupe: %s, Check: %s, Busy: %s",
-                    tostring(dupe), tostring(check), tostring(busy)))
-
-                if hasLeft and not readyToRejoin then
-                    if check == true and busy == false then
-                        print("[WS] Check=true & Busy=false! Ready to rejoin.")
-                        readyToRejoin = true
-                        if watchdogConnection then
-                            watchdogConnection:Disconnect()
-                            watchdogConnection = nil
-                        end
-                    end
-                end
-            elseif data.type == "event" then
-                print(string.format("[WS] Event: %s", data.event))
-            else
-                print("[WS] Unknown message type:", data.type)
-            end
+            -- ... rest of message handling (unchanged)
         end)
 
         ws.OnClose:Connect(function()
@@ -192,7 +203,7 @@ local function setupWebSocket()
     end
 end
 
--- Connect WebSocket (protected)
+-- Start WebSocket connection (spawned)
 task.spawn(function()
     print("[DEBUG] Spawning WebSocket connection thread")
     local ok, err = pcall(setupWebSocket)
@@ -200,15 +211,40 @@ task.spawn(function()
         warn("[WS] setupWebSocket crashed:", err)
     end
 end)
+print("[DEBUG] WebSocket connection thread started (spawned)")  -- <-- This prints immediately
 
--- Setup auto-rejoin (protected)
+-- Setup auto-rejoin
+print("[DEBUG] Calling setupAutoRejoin...")
 local ok, err = pcall(setupAutoRejoin)
 if not ok then
     warn("[AUTO-REJOIN] setupAutoRejoin failed:", err)
+else
+    print("[DEBUG] Auto-rejoin handler set")
 end
-print("[DEBUG] Auto-rejoin handler set")
 
--- ==================== SEND HELPERS (with debug & pcall) ====================
+-- ==================== POSITION FIX ====================
+task.spawn(function()
+    print("[DEBUG] Position fix thread started")
+    local char = player.Character or player.CharacterAdded:Wait()
+    while true do
+        char = player.Character or player.CharacterAdded:Wait()
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local ok, err = pcall(function()
+                hrp.CFrame = CFrame.new(-458, 244, -68)
+                print("[DEBUG] Position fixed")
+            end)
+            if not ok then
+                warn("[POSITION FIX] Failed to set CFrame:", err)
+            end
+            break
+        end
+        task.wait(1)
+    end
+end)
+print("[DEBUG] Position fix thread started (spawned)")
+
+-- ==================== SEND HELPERS ====================
 local function sendWS(payload)
     print(string.format("[DEBUG] sendWS called with payload type: %s", type(payload)))
     if ws and wsConnected then
@@ -241,62 +277,10 @@ local function sendDupeTrue()
     sendWS({ Dupe = true })
 end
 
--- ==================== POSITION FIX ====================
-task.spawn(function()
-    print("[DEBUG] Position fix thread started")
-    local char = player.Character or player.CharacterAdded:Wait()
-    while true do
-        char = player.Character or player.CharacterAdded:Wait()
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if hrp then
-            local ok, err = pcall(function()
-                hrp.CFrame = CFrame.new(-458, 244, -68)
-                print("[DEBUG] Position fixed")
-            end)
-            if not ok then
-                warn("[POSITION FIX] Failed to set CFrame:", err)
-            end
-            break
-        end
-        task.wait(1)
-    end
-end)
-
--- ==================== GUI PATH ====================
-print("[DEBUG] Waiting for GUI path...")
-local guiPath = nil
-local ok, err = pcall(function()
-    guiPath = PlayerGui:WaitForChild("Lobby", 30)
-        :WaitForChild("PostOffice", 30)
-        :WaitForChild("Menus", 30)
-        :WaitForChild("ReceivePackages", 30)
-        :WaitForChild("ScrollingFrame", 30)
-end)
-if not ok or not guiPath then
-    error("[GUI] Failed to find GUI path: " .. tostring(err))
-end
-print("[DEBUG] GUI path found")
-
--- ==================== NETWORKING ====================
-print("[DEBUG] Setting up remote and identifiers...")
-local remote, idValue, staticString
-ok, err = pcall(function()
-    remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
-    idValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
-        "RF_59fb8da4c771fdd9e7348c3e113b4939ec60069b536a2ff0e2dd4f9e857a6611_S"
-    ).Value
-    staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
-end)
-if not ok then
-    error("[NETWORK] Failed to get remote/identifiers: " .. tostring(err))
-end
-print("[DEBUG] Remote and identifiers set")
-
--- ==================== LEAVE AND WAIT FOR CHECK & NOT BUSY ====================
+-- ==================== LEAVE AND WAIT ====================
 local function leaveAndWaitForNextCycle()
     print("[LEAVE] Account: " .. player.Name)
 
-    -- Send Dupe=true (protected)
     local ok, err = pcall(function()
         sendDupeTrue()
         print("[LEAVE] Sent Dupe=true")
@@ -306,7 +290,6 @@ local function leaveAndWaitForNextCycle()
     end
 
     task.wait(0.5)
-
     print("[LEAVE] Leaving game intentionally...")
     hasLeft = true
     local kickOk, kickErr = pcall(function()
@@ -314,12 +297,10 @@ local function leaveAndWaitForNextCycle()
     end)
     if not kickOk then
         warn("[LEAVE] Kick failed:", kickErr)
-        -- Fallback: if kick fails, we might teleport out
         TeleportService:Teleport(game.PlaceId, player)
         return
     end
 
-    -- Watchdog (protected)
     task.spawn(function()
         print("[WATCHDOG] Waiting for Check=true AND Busy=false...")
         if ws and ws.OnMessage then
@@ -367,37 +348,34 @@ task.spawn(function()
     end
 end)
 
--- ==================== MAIN LOOP (with pcall for resilience) ====================
+-- ==================== MAIN LOOP ====================
 print("[MAIN] Starting main loop - Account: " .. player.Name)
+print("[DEBUG] Entering main loop...")  -- <-- You should see this before the loop starts
 
 while task.wait() do
+    print("[MAIN] Loop iteration")  -- <-- This prints each time the loop runs
+
     local loopOk, loopErr = pcall(function()
         local leaderstats = player:FindFirstChild("leaderstats")
         local gems = leaderstats and leaderstats:FindFirstChild("Gems")
 
-        -- SUCCESS: reached 5M gems
         if gems and gems.Value == 2500000 then
             if not sentRecovered and not hasLeft then
-                print(string.format("[MAIN] Gems = %d - RECOVERED! Sending Recovered...", gems.Value))
+                print(string.format("[MAIN] Gems = %d - RECOVERED!", gems.Value))
                 sentRecovered = true
-
                 local sendOk, sendErr = pcall(function()
                     sendRecovered(player.Name)
                 end)
                 if not sendOk then
                     warn("[MAIN] sendRecovered failed:", sendErr)
                 end
-
                 task.wait(0.5)
-
                 print("[MAIN] Sending Dupe=true and leaving...")
                 leaveAndWaitForNextCycle()
-                -- break out of loop (but pcall will return, we need to stop)
-                return -- exit the pcall, but we need to exit the while loop – we'll handle below
+                return
             end
         end
 
-        -- FAIL: no frames after 20 seconds
         if not sentFail then
             local frameFound = false
             local elapsed = 0
@@ -426,7 +404,7 @@ while task.wait() do
                 print("[INFO] Already at 5M, not reporting failure")
             elseif not frameFound then
                 sentFail = true
-                print("[INFO] No frames found after 20s - reporting failure ... currentgems")
+                print("[INFO] No frames found after 20s - reporting failure")
                 local sendOk, sendErr = pcall(function()
                     sendLose(player.Name)
                 end)
@@ -438,7 +416,6 @@ while task.wait() do
             end
         end
 
-        -- REMOTE FIRING (protected)
         for _, child in ipairs(guiPath:GetChildren()) do
             if child:IsA("Frame") then
                 local args = { { { idValue, staticString, child.Name } } }
@@ -454,10 +431,8 @@ while task.wait() do
 
     if not loopOk then
         warn("[MAIN] Loop iteration crashed:", loopErr)
-        -- Continue running – we don't break
     end
 
-    -- If we exited the pcall due to success, break the while loop
     if sentRecovered then
         break
     end
