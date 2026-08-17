@@ -1,3 +1,7 @@
+-- ==================== VERSION ====================
+local SCRIPT_VERSION = "2.0-DEBUG"
+print(string.format("[DEBUG] Script version: %s", SCRIPT_VERSION))
+
 -- SERVICES
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -5,19 +9,27 @@ local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
 
+print("[DEBUG] Services loaded")
+
 if not game:IsLoaded() then
+    print("[DEBUG] Game not loaded, waiting...")
     game.Loaded:Wait()
+    print("[DEBUG] Game loaded")
 end
 
 -- Load Anti-AFK
 task.spawn(function() 
+    print("[DEBUG] Loading Anti-AFK...")
     loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))() 
 end)
 
 local player = Players.LocalPlayer
+print(string.format("[DEBUG] LocalPlayer: %s", player and player.Name or "nil"))
 local PlayerGui = player:WaitForChild("PlayerGui")
+print("[DEBUG] PlayerGui found")
 
 -- ==================== LOAD WEBSOCKET LIBRARY ====================
+print("[DEBUG] Loading WebSocket library...")
 local websocket = loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/WebSocket/main/WebSocket.lua"))()
 if not websocket then
     error("Failed to load WebSocket library")
@@ -26,8 +38,10 @@ print("[WS] WebSocket library loaded")
 
 -- ==================== INTENTIONAL KICK FLAG ====================
 local hasLeft = false
+print("[DEBUG] hasLeft flag set")
 
 -- ==================== AUTO-REJOIN SETUP ====================
+print("[DEBUG] Setting up AutoRejoin GUI...")
 if game.CoreGui:FindFirstChild('AutoRejoin') then
     game.CoreGui.AutoRejoin:Destroy()
 end
@@ -37,8 +51,10 @@ AutoRejoin.Name = "AutoRejoin"
 AutoRejoin.Parent = game.CoreGui
 AutoRejoin.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 AutoRejoin.ResetOnSpawn = false
+print("[DEBUG] AutoRejoin GUI created")
 
 local function setupAutoRejoin()
+    print("[DEBUG] setupAutoRejoin called")
     GuiService.ErrorMessageChanged:Connect(function()
         if not hasLeft then
             print("[AUTO-REJOIN] Kicked unexpectedly! Rejoining...")
@@ -50,6 +66,7 @@ local function setupAutoRejoin()
 end
 
 -- ==================== WAIT FOR LOADING GUI ====================
+print("[DEBUG] Checking for LoadingGui...")
 local loadingGui = PlayerGui:FindFirstChild("LoadingGui")
 if loadingGui then
     print("[INFO] Waiting for LoadingGui to disappear...")
@@ -57,33 +74,47 @@ if loadingGui then
     while loadingGui.Parent do task.wait(0.05) end
     print("[INFO] Loading GUI disappeared → verifying 5s stable")
     task.wait(5)
+    print("[DEBUG] Loading GUI done")
+else
+    print("[DEBUG] No LoadingGui found")
 end
 
 -- ==================== SAFE GUI PATH ====================
 local function waitForChildWithTimeout(parent, childName, timeout)
     timeout = timeout or 30
+    print(string.format("[DEBUG] Waiting for %s in %s (timeout: %ds)", childName, parent.Name, timeout))
     local start = tick()
     while tick() - start < timeout do
         local child = parent:FindFirstChild(childName)
-        if child then return child end
+        if child then
+            print(string.format("[DEBUG] Found %s in %s", childName, parent.Name))
+            return child
+        end
         task.wait(0.5)
     end
     error(string.format("Timeout waiting for %s in %s", childName, parent.Name))
 end
 
+print("[DEBUG] Waiting for Lobby...")
 local Lobby = waitForChildWithTimeout(PlayerGui, "Lobby", 30)
+print("[DEBUG] Waiting for PostOffice...")
 local PostOffice = waitForChildWithTimeout(Lobby, "PostOffice", 30)
+print("[DEBUG] Waiting for Menus...")
 local Menus = waitForChildWithTimeout(PostOffice, "Menus", 30)
+print("[DEBUG] Waiting for ReceivePackages...")
 local ReceivePackages = waitForChildWithTimeout(Menus, "ReceivePackages", 30)
+print("[DEBUG] Waiting for ScrollingFrame...")
 local guiPath = waitForChildWithTimeout(ReceivePackages, "ScrollingFrame", 30)
 print("[INFO] GUI path found")
 
 -- ==================== NETWORKING ====================
+print("[DEBUG] Setting up remote and identifiers...")
 local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
 local idValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
     "RF_59fb8da4c771fdd9e7348c3e113b4939ec60069b536a2ff0e2dd4f9e857a6611_S"
 ).Value
 local staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
+print("[DEBUG] Remote and identifiers set")
 
 -- ==================== WEBSOCKET SETUP (NON-BLOCKING) ====================
 local WS_URL = "ws://192.168.1.14:8080"  -- CHANGE TO YOUR SERVER IP
@@ -94,9 +125,8 @@ local sentRecovered = false
 local readyToRejoin = false
 local watchdogConnection = nil
 
--- This function will run in a separate thread
 local function connectWebSocket()
-    print("[WS] Attempting to connect to " .. WS_URL)
+    print(string.format("[DEBUG] Attempting WebSocket connection to %s", WS_URL))
     local success, result = pcall(function()
         return websocket.connect(WS_URL)
     end)
@@ -146,9 +176,13 @@ local function connectWebSocket()
     end
 end
 
--- Start the WebSocket connection in a separate thread (non-blocking)
+-- Start WebSocket in separate thread
 task.spawn(connectWebSocket)
+print("[DEBUG] WebSocket connection thread started")
+
+-- Setup auto-rejoin
 setupAutoRejoin()
+print("[DEBUG] Auto-rejoin handler set")
 
 -- ==================== SEND HELPERS ====================
 local function sendWS(payload)
@@ -160,27 +194,32 @@ local function sendWS(payload)
 end
 
 local function sendLose(username)
+    print(string.format("[DEBUG] sendLose called for %s", username))
     sendWS({ Lose = username })
     sendWS({ instaFail = true })
 end
 
 local function sendRecovered(username)
+    print(string.format("[DEBUG] sendRecovered called for %s", username))
     sendWS({ Recovered = username })
     sendWS({ instaFail = false })
 end
 
 local function sendDupeTrue()
+    print("[DEBUG] sendDupeTrue called")
     sendWS({ Dupe = true })
 end
 
 -- ==================== POSITION FIX ====================
 task.spawn(function()
+    print("[DEBUG] Position fix thread started")
     local char = player.Character or player.CharacterAdded:Wait()
     while true do
         char = player.Character or player.CharacterAdded:Wait()
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if hrp then
             hrp.CFrame = CFrame.new(-458, 244, -68)
+            print("[DEBUG] Position fixed")
             break
         end
         task.wait(1)
@@ -189,7 +228,7 @@ end)
 
 -- ==================== LEAVE AND WAIT ====================
 local function leaveAndWaitForNextCycle()
-    print("[LEAVE] Account: " .. player.Name)
+    print(string.format("[LEAVE] Account: %s", player.Name))
     sendDupeTrue()
     print("[LEAVE] Sent Dupe=true")
     task.wait(0.5)
@@ -230,57 +269,67 @@ end
 
 -- ==================== MAIN LOOP ====================
 print("[MAIN] Starting main loop - Account: " .. player.Name)
+print("[DEBUG] Entering main loop...")
 
-while task.wait() do
-    local leaderstats = player:FindFirstChild("leaderstats")
-    local gems = leaderstats and leaderstats:FindFirstChild("Gems")
+local success, err = pcall(function()
+    while task.wait() do
+        local leaderstats = player:FindFirstChild("leaderstats")
+        local gems = leaderstats and leaderstats:FindFirstChild("Gems")
 
-    -- SUCCESS: reached 5M gems
-    if gems and gems.Value == 2500000 then
-        if not sentRecovered and not hasLeft then
-            print(string.format("[MAIN] Gems = %d - RECOVERED!", gems.Value))
-            sentRecovered = true
-            pcall(function() sendRecovered(player.Name) end)
-            task.wait(0.5)
-            print("[MAIN] Sending Dupe=true and leaving...")
-            leaveAndWaitForNextCycle()
-            break
-        end
-    end
-
-    -- FAIL: no frames after 20 seconds
-    if not sentFail then
-        local frameFound = false
-        local elapsed = 0
-        while elapsed < 20 do
-            for _, child in ipairs(guiPath:GetChildren()) do
-                if child:IsA("Frame") then
-                    frameFound = true
-                    break
-                end
+        -- SUCCESS: reached 5M gems
+        if gems and gems.Value == 2500000 then
+            if not sentRecovered and not hasLeft then
+                print(string.format("[MAIN] Gems = %d - RECOVERED!", gems.Value))
+                sentRecovered = true
+                pcall(function() sendRecovered(player.Name) end)
+                task.wait(0.5)
+                print("[MAIN] Sending Dupe=true and leaving...")
+                leaveAndWaitForNextCycle()
+                break
             end
-            if frameFound then break end
-            task.wait(0.5)
-            elapsed = elapsed + 0.5
         end
 
-        local currentGems = gems and gems.Value or 0
-        if currentGems == 2500000 then
-            print("[INFO] Already at 5M, not reporting failure")
-        elseif not frameFound then
-            sentFail = true
-            print("[INFO] No frames found after 20s - reporting failure")
-            pcall(function() sendLose(player.Name) end)
-        else
-            print("[INFO] Frames found, skipping fail report")
-        end
-    end
+        -- FAIL: no frames after 20 seconds
+        if not sentFail then
+            local frameFound = false
+            local elapsed = 0
+            while elapsed < 20 do
+                for _, child in ipairs(guiPath:GetChildren()) do
+                    if child:IsA("Frame") then
+                        frameFound = true
+                        break
+                    end
+                end
+                if frameFound then break end
+                task.wait(0.5)
+                elapsed = elapsed + 0.5
+            end
 
-    -- FIRE REMOTE FOR EACH FRAME
-    for _, child in ipairs(guiPath:GetChildren()) do
-        if child:IsA("Frame") then
-            local args = { { { idValue, staticString, child.Name } } }
-            remote:FireServer(unpack(args))
+            local currentGems = gems and gems.Value or 0
+            if currentGems == 2500000 then
+                print("[INFO] Already at 5M, not reporting failure")
+            elseif not frameFound then
+                sentFail = true
+                print("[INFO] No frames found after 20s - reporting failure")
+                pcall(function() sendLose(player.Name) end)
+            else
+                print("[INFO] Frames found, skipping fail report")
+            end
+        end
+
+        -- FIRE REMOTE FOR EACH FRAME
+        for _, child in ipairs(guiPath:GetChildren()) do
+            if child:IsA("Frame") then
+                local args = { { { idValue, staticString, child.Name } } }
+                remote:FireServer(unpack(args))
+            end
         end
     end
+end)
+
+if not success then
+    print(string.format("[ERROR] Main loop crashed: %s", err))
+    warn(string.format("[ERROR] Main loop crashed: %s", err))
 end
+
+print("[DEBUG] Script ended.")
