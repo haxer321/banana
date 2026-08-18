@@ -5,77 +5,13 @@ local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
 local GuiService = game:GetService("GuiService")
 
-if not game:IsLoaded() then game.Loaded:Wait() end
+if not game:IsLoaded() then
+    game.Loaded:Wait()
+end
 task.spawn(function() loadstring(game:HttpGet("https://raw.githubusercontent.com/hassanxzayn-lua/Anti-afk/main/antiafkbyhassanxzyn"))() end)
 local player = Players.LocalPlayer
 local PlayerGui = player:WaitForChild("PlayerGui")
 
--- ==================== HTTP & PID SETUP ====================
-local requestFunc = syn and syn.request or http and http.request or request
-if not requestFunc then error("No request function found!") end
-
-local function safeRequest(options)
-    local success, result = pcall(function() return requestFunc(options) end)
-    return success and result or nil
-end
-
-local function getPID()
-    local pid = get_process_identifier and get_process_identifier() or nil
-    if not pid then pid = HttpService:GenerateGUID(false) end
-    return tostring(pid)
-end
-local myPID = getPID()
-
--- Use 192.168.1.67 if your server is on another PC, or localhost if on the same PC
-local SERVER_IP = "192.168.1.67" 
-local SERVER_URL = "http://" .. SERVER_IP .. ":8080"
-local WS_URL = "ws://" .. SERVER_IP .. ":8080"
-
--- ==================== 1. AUTH SYNC (BLOCKS DUPR) ====================
-local inList, accountResult = false, nil
-print("[AUTH] 🔐 Checking authentication...")
-for i = 1, 30 do
-    local res = safeRequest({ Url = SERVER_URL .. "/accounts", Method = "GET" })
-    if res and res.Body then
-        local ok, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
-        if ok and type(data) == "table" then
-            for _, acc in ipairs(data) do
-                if acc.username == player.Name then
-                    inList = true
-                    accountResult = acc.result
-                    break
-                end
-            end
-        end
-    end
-    if inList then break end
-    task.wait(1)
-end
-
-if not inList then
-    print("[AUTH] ❌ NOT IN LIST - Kicking")
-    player:Kick("Not in active queue list")
-    return
-end
-
-if accountResult == "DUPR" then
-    print("[AUTH] ⛔ Account is DUPR (Sender). Receiver script will NOT execute.")
-    return 
-end
-
-print("[AUTH] ✅ ALLOWED - Receiver Account (" .. tostring(accountResult) .. ")")
-
--- ==================== 2. HTTP PID HEARTBEAT ====================
-task.spawn(function()
-    local url = SERVER_URL .. "/heartbeat?user=" .. player.Name .. "&pid=" .. myPID
-    safeRequest({ Url = url .. "&add", Method = "GET" })
-    while true do 
-        task.wait(10) 
-        safeRequest({ Url = url, Method = "GET" }) 
-    end
-end)
-
--- ==================== GAME LOAD & ANTI-AFK ====================
 local hasLeft = false  
 local waitingForNextCycle = false
 local readyToRejoin = false
@@ -111,6 +47,7 @@ if loadingGui then
 end
 
 task.spawn(function()
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local remote = ReplicatedStorage:WaitForChild("NetworkingContainer"):WaitForChild("DataRemote")
     local identifier = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForChild(
         "RE_d856f988f502567d87dc1c7cea80686fe201609fe1eb8f76df3b4486871e67ba"
@@ -119,9 +56,13 @@ task.spawn(function()
 end)
 print("[INFO] Game fully loaded")
 
--- ==================== WEBSOCKET SETUP ====================
+local WS_URL = "ws://192.168.1.67:8080"
 local ws = nil
 local wsConnected = false
+local requestFunc = syn and syn.request or http and http.request or request
+
+local sentFail = false
+local sentRecovered = false
 
 local function setupWebSocket()
     local success, result = pcall(function()
@@ -147,6 +88,7 @@ local function setupWebSocket()
 
                 print(string.format("[WS] State - Check: %s, Busy: %s", tostring(check), tostring(busy)))
 
+                -- ✅ GLOBAL CHECK: Catches the signal even if WS reconnected in the menu
                 if waitingForNextCycle and check == true and busy == false then
                     print("[WS] Check=true & Busy=false! Ready to rejoin.")
                     readyToRejoin = true
@@ -194,7 +136,6 @@ local function sendDupeTrue()
     sendWS({ Dupe = true })
 end
 
--- ==================== POSITION FIX ====================
 task.spawn(function()
     local char = player.Character or player.CharacterAdded:Wait()
     while true do
@@ -208,7 +149,6 @@ task.spawn(function()
     end
 end)
 
--- ==================== GUI PATH & REMOTE ====================
 local guiPath = player:WaitForChild("PlayerGui")
     :WaitForChild("Lobby")
     :WaitForChild("PostOffice")
@@ -222,7 +162,6 @@ local idValue = ReplicatedStorage:WaitForChild("IdentifiersContainer"):WaitForCh
 ).Value
 local staticString = "\218\231*\223\237\226@\151\148Y@7%\190&\159"
 
--- ==================== LEAVE AND WAIT FOR NEXT CYCLE ====================
 local function leaveAndWaitForNextCycle()
     print("[LEAVE] Account: " .. player.Name)
     sendDupeTrue()
@@ -239,10 +178,10 @@ local function leaveAndWaitForNextCycle()
         while not readyToRejoin do
             task.wait(2)
             
-            -- HTTP FALLBACK
+            -- ✅ HTTP FALLBACK: If WS died in the menu, HTTP will still work!
             if not readyToRejoin and requestFunc then
                 local success, res = pcall(function()
-                    return requestFunc({Url = SERVER_URL .. "/data", Method = "GET"})
+                    return requestFunc({Url = "http://192.168.1.67:8080/data", Method = "GET"})
                 end)
                 if success and res and res.Body then
                     local ok, data = pcall(HttpService.JSONDecode, HttpService, res.Body)
@@ -261,10 +200,7 @@ local function leaveAndWaitForNextCycle()
     end)
 end
 
--- ==================== MAIN LOOP ====================
 print("[MAIN] Starting main loop - Account: " .. player.Name)
-local sentFail = false
-local sentRecovered = false
 
 while task.wait() do
     local leaderstats = player:FindFirstChild("leaderstats")
@@ -309,7 +245,7 @@ while task.wait() do
             print("[INFO] Already at 10M, not reporting failure")
         elseif not frameFound then
             sentFail = true
-            print("[INFO] No frames found after 20s - reporting failure")
+            print("[INFO] No frames found after 20s - reporting failure ... currentgems")
             pcall(function() sendLose(player.Name) end)
         else
             print("[INFO] Frames found, skipping fail report")
