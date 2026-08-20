@@ -175,6 +175,7 @@ local function leaveAndWaitForNextCycle()
 
     task.spawn(function()
         print("[WATCHDOG] Waiting for Check=true AND Busy=false...")
+        task.wait(10)
         while not readyToRejoin do
             task.wait(2)
             
